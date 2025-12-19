@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Fonts */
+@font-face {
+  font-family: 'ChatFont';
+  src: url('./assets/fonts/chat.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'HeadingsFont';
+  src: url('./assets/fonts/headings.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Holiday';
+  src: url('./assets/fonts/Holiday.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  margin: 0;
+  font-family: 'HeadingsFont', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 16px;
+}
+
+/* Apply custom font to headings with larger sizes */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'HeadingsFont', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+h1 {
+  font-size: 2.5rem;
+}
+
+h2 {
+  font-size: 2rem;
+}
+
+h3 {
+  font-size: 1.5rem;
+}
+
+/* Apply heading font to important UI elements */
+button, .btn {
+  font-family: 'HeadingsFont', sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+
+label, .label {
+  font-family: 'HeadingsFont', sans-serif;
+  font-size: 1rem;
+}
+
+input, select, textarea {
+  font-family: 'HeadingsFont', sans-serif;
+  font-size: 1.1rem;
+}
+
+/* Tab buttons and navigation */
+nav, .tab, [role="tab"] {
+  font-family: 'HeadingsFont', sans-serif;
+  font-size: 1.1rem;
+}
+
+/* Amount displays and important numbers */
+.amount, .balance, .price {
+  font-family: 'HeadingsFont', sans-serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+/* Trip mood - playful text */
+.trip-text {
+  font-family: 'HeadingsFont', sans-serif;
+  letter-spacing: 0.03em;
+}
+
+/* Chat uses ChatFont with larger size */
+.chat-container {
+  font-family: 'ChatFont', sans-serif;
+  font-size: 1.15rem;
+}
+
+.chat-message {
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
