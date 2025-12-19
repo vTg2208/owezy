@@ -1,0 +1,13 @@
+{
+  "name": "trip-expense-manager",
+  "version": "1.0.0",
+  "description": "Trip expense sharing application",
+  "scripts": {
+    "install": "cd backend && npm install",
+    "build": "cd backend && npm run build",
+    "start": "cd backend && npm start"
+  },
+  "keywords": ["expense", "trip", "sharing"],
+  "author": "",
+  "license": "MIT"
+}
