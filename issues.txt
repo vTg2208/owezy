@@ -1,0 +1,6 @@
+shouldn't ask the name again while joining the trip.
+change the authentication method.
+modify the code for deploying in GitHub and render.	
+bring the arrow to inside the box.
+a user cannot login to the same room twice with different names
+update the usage of leave trip functionality
