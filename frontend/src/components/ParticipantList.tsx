@@ -10,14 +10,14 @@ interface ParticipantListProps {
 export default function ParticipantList({ participants, isAdmin, isLocked, onRemove }: ParticipantListProps) {
   return (
     <div>
-      <h3 className="font-semibold text-gray-700 mb-3">
+      <h3 className="font-semibold text-gray-700 mb-3 text-base sm:text-lg">
         Fellow Travellers
       </h3>
       <div className="flex flex-wrap gap-2">
         {participants.map((participant) => (
           <div
             key={participant.id}
-            className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-full flex items-center gap-2"
+            className="bg-indigo-50 text-indigo-700 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full flex items-center gap-2 text-sm sm:text-base"
           >
             <span>{participant.name}</span>
             {isAdmin && !isLocked && (

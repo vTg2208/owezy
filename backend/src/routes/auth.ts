@@ -113,10 +113,15 @@ router.get('/me', authenticateToken, (req: AuthRequest, res: Response) => {
 router.get('/my-trips', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     const trips = db.prepare(`
-      SELECT * FROM trips 
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-    `).all(req.userId);
+      SELECT 
+        t.*,
+        m.id as member_id
+      FROM trips t
+      INNER JOIN members m ON m.trip_id = t.id AND m.user_id = ?
+      WHERE t.user_id = ? OR m.user_id = ?
+      GROUP BY t.id
+      ORDER BY t.created_at DESC
+    `).all(req.userId, req.userId, req.userId);
 
     res.json({ trips });
   } catch (error) {

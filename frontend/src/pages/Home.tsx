@@ -35,14 +35,22 @@ export default function Home({ onTripJoin }: HomeProps) {
     setLoading(true);
     setError('');
 
+    // Check if user is logged in
+    if (!user) {
+      setError('You must be logged in to create a trip. Please login or register first.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const { tripId, roomCode, member } = await api.createTrip(tripName, participantName);
       setCreatedRoomCode(roomCode);
       // Auto-join as host
       onTripJoin({ tripId, participantId: member.id });
-      navigate(`/trip/${tripId}`);
-    } catch (err) {
-      setError('Failed to create trip. Please try again.');
+      navigate(`/trip/${tripId}`, { state: { participantId: member.id } });
+    } catch (err: any) {
+      console.error('Create trip error:', err);
+      setError(err.message || 'Failed to create trip. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -53,11 +61,19 @@ export default function Home({ onTripJoin }: HomeProps) {
     setLoading(true);
     setError('');
 
+    // Check if user is logged in
+    if (!user) {
+      setError('You must be logged in to join a trip. Please login or register first.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const { tripId, member } = await api.joinTrip(roomCode.toUpperCase(), participantName);
       onTripJoin({ tripId, participantId: member.id });
-      navigate(`/trip/${tripId}`);
+      navigate(`/trip/${tripId}`, { state: { participantId: member.id } });
     } catch (err: any) {
+      console.error('Join trip error:', err);
       setError(err.message || 'Failed to join trip. Please check the room code.');
     } finally {
       setLoading(false);
@@ -85,22 +101,45 @@ export default function Home({ onTripJoin }: HomeProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-indigo-600 mb-2">Owezy</h1>
-          <p className="text-gray-600">Share expenses with your travel buddies</p>
+    <div className="min-h-screen flex items-center justify-center p-4 relative">
+      {/* Back to Dashboard Arrow */}
+      {user && (
+        <Link
+          to="/dashboard"
+          className="absolute top-4 left-4 sm:top-6 sm:left-6 p-2 sm:p-3 rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 group"
+          title="Back to Dashboard"
+        >
+          <svg className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 group-hover:text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+        </Link>
+      )}
+      
+      <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 max-w-md w-full">
+        <div className="text-center mb-6 sm:mb-8">
           
           {/* User Info */}
-          {user && (
+          {user ? (
             <div className="mt-4">
-              <p className="text-sm text-gray-700">Logged in as <span className="font-semibold">{user.name}</span></p>
-              <Link
-                to="/dashboard"
-                className="inline-block mt-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-100"
-              >
-                Go to Dashboard
-              </Link>
+              <p className="text-base text-gray-700">Logged in as <span className="font-semibold">{user.name}</span></p>
+            </div>
+          ) : (
+            <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <p className="text-xs sm:text-sm text-yellow-800 mb-2">You need to be logged in to create or join trips</p>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                <Link
+                  to="/login"
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+                >
+                  Login
+                </Link>
+                <Link
+                  to="/register"
+                  className="px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700"
+                >
+                  Register
+                </Link>
+              </div>
             </div>
           )}
         </div>

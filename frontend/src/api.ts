@@ -1,4 +1,4 @@
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 function getAuthHeaders() {
   const token = localStorage.getItem('auth_token');
@@ -25,7 +25,7 @@ export const api = {
   joinTrip: async (roomCode: string, memberName: string) => {
     const res = await fetch(`${API_BASE}/trips/join`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ roomCode, memberName })
     });
     if (!res.ok) {
@@ -37,7 +37,9 @@ export const api = {
 
   // Get trip details
   getTrip: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}`);
+    const res = await fetch(`${API_BASE}/trips/${tripId}`, {
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to fetch trip');
     return res.json();
   },
@@ -45,7 +47,8 @@ export const api = {
   // Lock room
   lockRoom: async (tripId: string) => {
     const res = await fetch(`${API_BASE}/trips/${tripId}/lock`, {
-      method: 'POST'
+      method: 'POST',
+      headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Failed to lock room');
     return res.json();
@@ -54,7 +57,8 @@ export const api = {
   // Remove participant
   removeParticipant: async (tripId: string, memberId: string) => {
     const res = await fetch(`${API_BASE}/trips/${tripId}/members/${memberId}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Failed to remove participant');
     return res.json();
@@ -70,7 +74,7 @@ export const api = {
   }) => {
     const res = await fetch(`${API_BASE}/trips/${tripId}/expenses`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
     if (!res.ok) throw new Error('Failed to add expense');
@@ -79,7 +83,9 @@ export const api = {
 
   // Get balances
   getBalances: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/balances`);
+    const res = await fetch(`${API_BASE}/trips/${tripId}/balances`, {
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to fetch balances');
     const data = await res.json();
     return data.balances || [];
@@ -87,7 +93,9 @@ export const api = {
 
   // Get settlement
   getSettlement: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/balances`);
+    const res = await fetch(`${API_BASE}/trips/${tripId}/balances`, {
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to fetch settlement');
     const data = await res.json();
     return data.settlements || [];
@@ -97,7 +105,7 @@ export const api = {
   sendMessage: async (tripId: string, memberId: string, message: string) => {
     const res = await fetch(`${API_BASE}/trips/${tripId}/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ memberId, message })
     });
     if (!res.ok) throw new Error('Failed to send message');
@@ -106,7 +114,9 @@ export const api = {
 
   // Get chat messages
   getMessages: async (tripId: string, limit = 50) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/messages?limit=${limit}`);
+    const res = await fetch(`${API_BASE}/trips/${tripId}/messages?limit=${limit}`, {
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to fetch messages');
     return res.json();
   }

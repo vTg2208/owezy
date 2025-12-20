@@ -26,27 +26,27 @@ export default function SettlementPlan({ settlement, currentUserId }: Settlement
   const userReceives = userSettlements.filter(txn => txn.to === currentUserId);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {userOwes.length > 0 && (
         <div>
-          <h3 className="text-lg font-semibold text-red-600 mb-3">You Need to Pay:</h3>
-          <div className="space-y-3">
+          <h3 className="text-base sm:text-lg font-semibold text-red-600 mb-2 sm:mb-3">You Need to Pay:</h3>
+          <div className="space-y-2 sm:space-y-3">
             {userOwes.map((txn, index) => (
               <div
                 key={index}
-                className="flex items-center gap-4 p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200"
+                className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200"
               >
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-800">You pay</div>
+                <div className="flex-1 w-full sm:w-auto">
+                  <div className="font-semibold text-gray-800 text-sm sm:text-base">You pay</div>
                 </div>
                 
-                <div className="text-center px-4 py-2 bg-white rounded-lg shadow">
-                  <div className="text-2xl font-bold text-red-600">₹{txn.amount.toFixed(2)}</div>
+                <div className="text-center px-3 sm:px-4 py-2 bg-white rounded-lg shadow w-full sm:w-auto">
+                  <div className="text-xl sm:text-2xl font-bold text-red-600">₹{txn.amount.toFixed(2)}</div>
                 </div>
                 
-                <div className="flex-1 text-right">
-                  <div className="text-sm text-gray-600">to</div>
-                  <div className="font-semibold text-gray-800">{txn.toName}</div>
+                <div className="flex-1 text-left sm:text-right w-full sm:w-auto">
+                  <div className="text-xs sm:text-sm text-gray-600">to</div>
+                  <div className="font-semibold text-gray-800 text-sm sm:text-base">{txn.toName}</div>
                 </div>
               </div>
             ))}
@@ -56,24 +56,24 @@ export default function SettlementPlan({ settlement, currentUserId }: Settlement
 
       {userReceives.length > 0 && (
         <div>
-          <h3 className="text-lg font-semibold text-green-600 mb-3">You Will Receive:</h3>
-          <div className="space-y-3">
+          <h3 className="text-base sm:text-lg font-semibold text-green-600 mb-2 sm:mb-3">You Will Receive:</h3>
+          <div className="space-y-2 sm:space-y-3">
             {userReceives.map((txn, index) => (
               <div
                 key={index}
-                className="flex items-center gap-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200"
+                className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200"
               >
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-800">{txn.fromName}</div>
-                  <div className="text-sm text-gray-600">pays you</div>
+                <div className="flex-1 w-full sm:w-auto">
+                  <div className="font-semibold text-gray-800 text-sm sm:text-base">{txn.fromName}</div>
+                  <div className="text-xs sm:text-sm text-gray-600">pays you</div>
                 </div>
                 
-                <div className="text-center px-4 py-2 bg-white rounded-lg shadow">
-                  <div className="text-2xl font-bold text-green-600">₹{txn.amount.toFixed(2)}</div>
+                <div className="text-center px-3 sm:px-4 py-2 bg-white rounded-lg shadow w-full sm:w-auto">
+                  <div className="text-xl sm:text-2xl font-bold text-green-600">₹{txn.amount.toFixed(2)}</div>
                 </div>
                 
-                <div className="flex-1 text-right">
-                  <div className="text-sm text-gray-600">receive</div>
+                <div className="flex-1 text-left sm:text-right w-full sm:w-auto">
+                  <div className="text-xs sm:text-sm text-gray-600">receive</div>
                 </div>
               </div>
             ))}

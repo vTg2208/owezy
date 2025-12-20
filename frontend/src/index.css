@@ -34,55 +34,110 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-size: 16px;
+  font-size: 14px;
+  overflow-x: hidden;
 }
 
-/* Apply custom font to headings with larger sizes */
+@media (min-width: 640px) {
+  body {
+    font-size: 16px;
+  }
+}
+
+/* Apply custom font to headings with responsive sizes */
 h1, h2, h3, h4, h5, h6 {
   font-family: 'HeadingsFont', sans-serif;
   letter-spacing: 0.02em;
 }
 
 h1 {
-  font-size: 2.5rem;
+  font-size: 1.875rem;
+}
+
+@media (min-width: 640px) {
+  h1 {
+    font-size: 2.5rem;
+  }
 }
 
 h2 {
-  font-size: 2rem;
+  font-size: 1.5rem;
+}
+
+@media (min-width: 640px) {
+  h2 {
+    font-size: 2rem;
+  }
 }
 
 h3 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  h3 {
+    font-size: 1.5rem;
+  }
 }
 
 /* Apply heading font to important UI elements */
 button, .btn {
   font-family: 'HeadingsFont', sans-serif;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   letter-spacing: 0.01em;
+}
+
+@media (min-width: 640px) {
+  button, .btn {
+    font-size: 1.05rem;
+  }
 }
 
 label, .label {
   font-family: 'HeadingsFont', sans-serif;
-  font-size: 1rem;
+  font-size: 0.875rem;
+}
+
+@media (min-width: 640px) {
+  label, .label {
+    font-size: 1rem;
+  }
 }
 
 input, select, textarea {
   font-family: 'HeadingsFont', sans-serif;
-  font-size: 1.1rem;
+  font-size: 1rem;
+}
+
+@media (min-width: 640px) {
+  input, select, textarea {
+    font-size: 1.1rem;
+  }
 }
 
 /* Tab buttons and navigation */
 nav, .tab, [role="tab"] {
   font-family: 'HeadingsFont', sans-serif;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
+}
+
+@media (min-width: 640px) {
+  nav, .tab, [role="tab"] {
+    font-size: 1.1rem;
+  }
 }
 
 /* Amount displays and important numbers */
 .amount, .balance, .price {
   font-family: 'HeadingsFont', sans-serif;
-  font-size: 1.3rem;
+  font-size: 1.1rem;
   font-weight: 600;
+}
+
+@media (min-width: 640px) {
+  .amount, .balance, .price {
+    font-size: 1.3rem;
+  }
 }
 
 /* Trip mood - playful text */

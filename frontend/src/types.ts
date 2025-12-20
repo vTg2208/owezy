@@ -5,6 +5,7 @@ export interface Trip {
   admin_id: string;
   is_locked: number;
   created_at: string;
+  member_id?: string; // Added for user's member ID in this trip
 }
 
 export interface Participant {

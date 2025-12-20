@@ -14,18 +14,18 @@ export default function ExpenseList({ expenses }: ExpenseListProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       {expenses.map((expense) => (
-        <div key={expense.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <h3 className="font-semibold text-lg text-gray-800">{expense.description}</h3>
-              <p className="text-sm text-gray-600">
+        <div key={expense.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 hover:shadow-md transition">
+          <div className="flex justify-between items-start mb-2 gap-2">
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-base sm:text-lg text-gray-800 truncate">{expense.description}</h3>
+              <p className="text-xs sm:text-sm text-gray-600">
                 Paid by <span className="font-medium">{expense.paid_by_name}</span>
               </p>
             </div>
-            <div className="text-right">
-              <div className="text-2xl font-bold text-indigo-600">₹{expense.amount.toFixed(2)}</div>
+            <div className="text-right flex-shrink-0">
+              <div className="text-lg sm:text-2xl font-bold text-indigo-600">₹{expense.amount.toFixed(2)}</div>
               <div className="text-xs text-gray-500 capitalize">{expense.split_type} split</div>
             </div>
           </div>
