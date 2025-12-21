@@ -7,6 +7,7 @@ import TripDashboard from './pages/TripDashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import backgroundImage from './assets/images/backgrounds/background.jpg';
 
 const STORAGE_KEY = 'currentTrip';
 
@@ -108,7 +109,7 @@ function AppContent() {
       <div 
         className="fixed inset-0 bg-cover bg-center bg-no-repeat opacity-20 pointer-events-none"
         style={{ 
-          backgroundImage: "url('/src/assets/images/backgrounds/background.jpg')",
+          backgroundImage: `url(${backgroundImage})`,
           zIndex: 0
         }}
       />
