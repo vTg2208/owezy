@@ -19,6 +19,7 @@ interface CustomSplitEntry {
 export default function AddExpense({ tripId, currentUserId, participants, onExpenseAdded }: AddExpenseProps) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [splitType, setSplitType] = useState<'equal' | 'custom' | 'percentage'>('equal');
   const [customSplits, setCustomSplits] = useState<CustomSplitEntry[]>([]);
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
@@ -31,6 +32,48 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
   useState(() => {
     setSelectedParticipants(participants.map(p => p.id));
   });
+
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 800;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', 0.7));
+          } else {
+            reject(new Error('Failed to get canvas context'));
+          }
+        };
+        img.onerror = (error) => reject(error);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,17 +127,29 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
             amount: amountNum / selectedParticipants.length
           }));
 
+      let uploadedUrl = '';
+      if (receiptFile) {
+        try {
+          uploadedUrl = await compressImage(receiptFile);
+        } catch (err) {
+          console.error('Error compressing image:', err);
+          throw new Error('Failed to process image. Please try a smaller image.');
+        }
+      }
+
       await api.addExpense(tripId, {
         paidBy: currentUserId,
         description,
         amount: amountNum,
         splitType,
-        splits
+        splits,
+        receiptUrl: uploadedUrl
       });
 
       // Reset form
       setAmount('');
       setDescription('');
+      setReceiptFile(null);
       setSplitType('equal');
       setCustomSplits([]);
       setSelectedParticipants(participants.map(p => p.id));
@@ -233,6 +288,30 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="e.g., Dinner at restaurant"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Receipt Image (Optional)
+          </label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files && e.target.files[0]) {
+                const file = e.target.files[0];
+                // 5MB limit
+                if (file.size > 5 * 1024 * 1024) {
+                  alert('File size exceeds 5MB limit. Please choose a smaller file.');
+                  e.target.value = '';
+                  setReceiptFile(null);
+                  return;
+                }
+                setReceiptFile(file);
+              }
+            }}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
         </div>

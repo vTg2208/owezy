@@ -1,74 +1,122 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authAPI, User } from '../api/auth';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  sendEmailVerification
+} from 'firebase/auth';
+import { auth } from '../firebase';
+import { authAPI } from '../api';
+
+// We'll map Firebase User to our app's User interface
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  emailVerified: boolean;
+}
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   isLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = 'auth_token';
-const USER_KEY = 'auth_user';
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load token and user from localStorage on mount
   useEffect(() => {
-    const loadAuth = async () => {
-      const savedToken = localStorage.getItem(TOKEN_KEY);
-      const savedUser = localStorage.getItem(USER_KEY);
-
-      if (savedToken && savedUser) {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // User is signed in
         try {
-          // Verify token is still valid
-          const user = await authAPI.getCurrentUser(savedToken);
-          setToken(savedToken);
-          setUser(user);
+          // We can try to get the name from the backend if we want to be sure,
+          // but for performance, we can rely on what we have or fetch lazily.
+          // For this hackathon, let's just set the user.
+          
+          setUser({
+            id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+            emailVerified: firebaseUser.emailVerified
+          });
         } catch (error) {
-          // Token invalid, clear storage
-          localStorage.removeItem(TOKEN_KEY);
-          localStorage.removeItem(USER_KEY);
+          console.error("Error syncing auth state", error);
+          setUser(null);
         }
+      } else {
+        // User is signed out
+        setUser(null);
       }
       setIsLoading(false);
-    };
+    });
 
-    loadAuth();
+    return () => unsubscribe();
   }, []);
 
   const login = async (email: string, password: string) => {
-    const response = await authAPI.login(email, password);
-    setToken(response.token);
-    setUser(response.user);
-    localStorage.setItem(TOKEN_KEY, response.token);
-    localStorage.setItem(USER_KEY, JSON.stringify(response.user));
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    
+    if (!userCredential.user.emailVerified) {
+      await signOut(auth);
+      throw new Error('Please verify your email before logging in.');
+    }
+
+    // Sync with backend to ensure user exists (JIT provisioning)
+    await authAPI.syncUser(userCredential.user.email!, userCredential.user.displayName || '');
+  };
+
+  const loginWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    const userCredential = await signInWithPopup(auth, provider);
+    // Sync with backend
+    await authAPI.syncUser(userCredential.user.email!, userCredential.user.displayName || '');
   };
 
   const register = async (email: string, password: string, name: string) => {
-    const response = await authAPI.register(email, password, name);
-    setToken(response.token);
-    setUser(response.user);
-    localStorage.setItem(TOKEN_KEY, response.token);
-    localStorage.setItem(USER_KEY, JSON.stringify(response.user));
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    
+    // Send verification email
+    await sendEmailVerification(userCredential.user);
+
+    // Sync with backend to save the name
+    await authAPI.syncUser(email, name);
+    
+    // Force logout so they can't access the app until verified
+    await signOut(auth);
+    setUser(null);
   };
 
-  const logout = () => {
-    setToken(null);
+  const logout = async () => {
+    await signOut(auth);
     setUser(null);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem('currentTrip'); // Clear app state
+  };
+
+  const deleteAccount = async () => {
+    if (!user) return;
+    
+    // Call backend to delete from Mongo + Firebase Admin
+    await authAPI.deleteAccount();
+    
+    // Sign out locally
+    await signOut(auth);
+    setUser(null);
+    localStorage.removeItem('currentTrip');
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, login, loginWithGoogle, register, logout, deleteAccount, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

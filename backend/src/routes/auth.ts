@@ -1,103 +1,55 @@
 import { Router, Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { nanoid } from 'nanoid';
 import { User, Trip, Member } from '../models';
-import { AuthResponse } from '../types';
-import { JWT_SECRET, authenticateToken, AuthRequest } from '../middleware/auth';
+import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { auth } from '../firebase';
 
 const router = Router();
 
-// Register new user
-router.post('/register', async (req: Request, res: Response) => {
+// Sync user from Firebase to MongoDB
+// This endpoint is called after Firebase login on frontend to ensure user exists in DB
+router.post('/sync', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, name } = req.body;
+    const userId = req.userId; // From Firebase token
 
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'Email, password, and name are required' });
+    if (!userId || !email) {
+      return res.status(400).json({ error: 'User ID and email are required' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      return res.status(400).json({ error: 'User with this email already exists' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const userId = nanoid();
-    const newUser = await User.create({
-      _id: userId,
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      name
-    });
-
-    // Generate token
-    const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
-
-    const response: AuthResponse = {
-      user: {
-        id: userId,
-        email: email.toLowerCase(),
-        name
-      },
-      token
-    };
-
-    res.status(201).json(response);
-  } catch (error) {
-    console.error('[AUTH] Registration error:', error);
-    res.status(500).json({ error: 'Failed to register user' });
-  }
-});
-
-// Login
-router.post('/login', async (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    // Find user
-    const user = await User.findOne({ email: email.toLowerCase() });
+    // Check if user exists, if not create
+    let user = await User.findById(userId);
+    
     if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      user = await User.create({
+        _id: userId,
+        email: email.toLowerCase(),
+        name: name || email.split('@')[0] // Fallback name
+      });
+    } else {
+      // Update name if provided
+      if (name && user.name !== name) {
+        user.name = name;
+        await user.save();
+      }
     }
 
-    // Verify password
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    // Generate token
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '30d' });
-
-    const response: AuthResponse = {
+    res.json({
       user: {
         id: user._id,
         email: user.email,
         name: user.name
-      },
-      token
-    };
-
-    res.json(response);
+      }
+    });
   } catch (error) {
-    console.error('[AUTH] Login error:', error);
-    res.status(500).json({ error: 'Failed to login' });
+    console.error('[AUTH] Sync error:', error);
+    res.status(500).json({ error: 'Failed to sync user' });
   }
 });
 
 // Get current user (verify token)
 router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await User.findById(req.userId).select('-password');
+    const user = await User.findById(req.userId);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -145,6 +97,24 @@ router.get('/my-trips', authenticateToken, async (req: AuthRequest, res: Respons
   } catch (error) {
     console.error('[AUTH] Get trips error:', error);
     res.status(500).json({ error: 'Failed to get trips' });
+  }
+});
+
+// Delete account
+router.delete('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+
+    // 1. Delete from MongoDB
+    await User.findByIdAndDelete(userId);
+    
+    // 2. Delete from Firebase Authentication
+    await auth.deleteUser(userId);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[AUTH] Delete account error:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 

@@ -1,10 +1,9 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 // User Model
-export interface IUser extends Document {
-  _id: string;
+export interface IUser extends Omit<Document, '_id'> {
+  _id: string; // Firebase UID
   email: string;
-  password: string;
   name: string;
   created_at: Date;
 }
@@ -12,7 +11,7 @@ export interface IUser extends Document {
 const UserSchema = new Schema({
   _id: { type: String, required: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  // password: { type: String, required: true }, // Removed, handled by Firebase
   name: { type: String, required: true },
   created_at: { type: Date, default: Date.now }
 });
@@ -20,7 +19,7 @@ const UserSchema = new Schema({
 export const User = mongoose.model<IUser>('User', UserSchema);
 
 // Trip Model
-export interface ITrip extends Document {
+export interface ITrip extends Omit<Document, '_id'> {
   _id: string;
   name: string;
   room_code: string;
@@ -45,7 +44,7 @@ const TripSchema = new Schema({
 export const Trip = mongoose.model<ITrip>('Trip', TripSchema);
 
 // Member Model
-export interface IMember extends Document {
+export interface IMember extends Omit<Document, '_id'> {
   _id: string;
   trip_id: string;
   name: string;
@@ -71,7 +70,7 @@ export interface IExpenseSplit {
   amount: number;
 }
 
-export interface IExpense extends Document {
+export interface IExpense extends Omit<Document, '_id'> {
   _id: string;
   trip_id: string;
   paid_by: string;
@@ -79,6 +78,7 @@ export interface IExpense extends Document {
   amount: number;
   split_type: string;
   splits: IExpenseSplit[];
+  receipt_url?: string;
   created_at: Date;
 }
 
@@ -93,13 +93,14 @@ const ExpenseSchema = new Schema({
     member_id: { type: String, required: true },
     amount: { type: Number, required: true }
   }],
+  receipt_url: { type: String },
   created_at: { type: Date, default: Date.now }
 });
 
 export const Expense = mongoose.model<IExpense>('Expense', ExpenseSchema);
 
 // ChatMessage Model
-export interface IChatMessage extends Document {
+export interface IChatMessage extends Omit<Document, '_id'> {
   _id: string;
   trip_id: string;
   member_id: string;

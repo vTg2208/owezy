@@ -1,24 +1,32 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { authAPI } from '../api/auth';
+import { authAPI } from '../api';
 import { Trip } from '../types';
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { user, logout, deleteAccount } = useAuth();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const handleDeleteAccount = async () => {
+    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+      try {
+        await deleteAccount();
+      } catch (error) {
+        console.error('Failed to delete account:', error);
+        alert('Failed to delete account. Please try again.');
+      }
+    }
+  };
 
   useEffect(() => {
     const loadTrips = async () => {
       if (!user) return;
       
       try {
-        const token = localStorage.getItem('auth_token');
-        if (token) {
-          const myTrips = await authAPI.getMyTrips(token);
-          setTrips(myTrips);
-        }
+        const myTrips = await authAPI.getMyTrips();
+        setTrips(myTrips);
       } catch (error) {
         console.error('Failed to load trips:', error);
       } finally {
@@ -36,12 +44,20 @@ export default function Dashboard() {
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Welcome, {user?.name}!</h1>
           </div>
-          <button
-            onClick={logout}
-            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm sm:text-base w-full sm:w-auto"
-          >
-            Logout
-          </button>
+          <div className="flex gap-2 w-full sm:w-auto">
+            <button
+              onClick={handleDeleteAccount}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm sm:text-base flex-1 sm:flex-none"
+            >
+              Delete Account
+            </button>
+            <button
+              onClick={logout}
+              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm sm:text-base flex-1 sm:flex-none"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">

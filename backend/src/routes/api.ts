@@ -136,6 +136,7 @@ router.get('/trips/:tripId', authenticateToken, async (req: AuthRequest, res: Re
       description: e.description,
       amount: e.amount,
       split_type: e.split_type,
+      receipt_url: e.receipt_url,
       created_at: e.created_at
     }));
 
@@ -166,7 +167,7 @@ router.get('/trips/:tripId', authenticateToken, async (req: AuthRequest, res: Re
 router.post('/trips/:tripId/expenses', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { tripId } = req.params;
-    const { paidBy, description, amount, splitType = 'equal', splits } = req.body;
+    const { paidBy, description, amount, splitType = 'equal', splits, receiptUrl } = req.body;
 
     if (!paidBy || !description || !amount) {
       res.status(400).json({ error: 'paidBy, description, and amount are required' });
@@ -215,7 +216,8 @@ router.post('/trips/:tripId/expenses', authenticateToken, async (req: AuthReques
       description,
       amount,
       split_type: splitType,
-      splits: splitAmounts
+      splits: splitAmounts,
+      receipt_url: receiptUrl
     });
 
     res.status(201).json({ expenseId, splitType, memberCount: members.length });
@@ -232,40 +234,7 @@ router.get('/trips/:tripId/balances', authenticateToken, async (req: AuthRequest
     const members = await Member.find({ trip_id: tripId });
     const expenses = await Expense.find({ trip_id: tripId });
     
-    // Flatten splits from all expenses
-    // Map to the structure expected by calculateBalances (which expects 'member_id' and 'amount')
-    // The embedded splits already have member_id and amount.
-    // But calculateBalances expects ExpenseSplit interface which has expense_id.
-    // I'll cast it or map it.
-    const allSplits = expenses.flatMap(e => e.splits.map(s => ({
-      id: 'generated', // Dummy ID
-      expense_id: e._id,
-      member_id: s.member_id,
-      amount: s.amount
-    })));
-
-    // Map members to match interface (id vs _id)
-    const mappedMembers = members.map(m => ({
-      id: m._id,
-      trip_id: m.trip_id,
-      name: m.name,
-      user_id: m.user_id,
-      is_admin: m.is_admin ? 1 : 0,
-      created_at: m.created_at.toISOString()
-    }));
-
-    // Map expenses
-    const mappedExpenses = expenses.map(e => ({
-      id: e._id,
-      trip_id: e.trip_id,
-      paid_by: e.paid_by,
-      description: e.description,
-      amount: e.amount,
-      split_type: e.split_type,
-      created_at: e.created_at.toISOString()
-    }));
-
-    const balances = calculateBalances(mappedMembers as any, mappedExpenses as any, allSplits as any);
+    const balances = calculateBalances(members, expenses);
     const settlements = calculateSettlements(balances);
 
     res.json({ balances, settlements });
@@ -280,6 +249,19 @@ router.post('/trips/:tripId/lock', authenticateToken, async (req: AuthRequest, r
     const { tripId } = req.params;
     
     await Trip.findByIdAndUpdate(tripId, { is_locked: true });
+    
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Unlock a trip (requires authentication)
+router.post('/trips/:tripId/unlock', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { tripId } = req.params;
+    
+    await Trip.findByIdAndUpdate(tripId, { is_locked: false });
     
     res.json({ success: true });
   } catch (error) {

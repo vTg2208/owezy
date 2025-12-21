@@ -44,3 +44,5 @@ coverage/
 .cache/
 temp/
 tmp/
+
+backend/service-account-key.json

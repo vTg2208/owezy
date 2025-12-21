@@ -1,4 +1,4 @@
-import { Member, Expense, ExpenseSplit } from '../types';
+import { IMember, IExpense } from '../models';
 
 export interface Balance {
   memberId: string;
@@ -15,15 +15,14 @@ export interface Settlement {
 }
 
 export function calculateBalances(
-  members: Member[],
-  expenses: Expense[],
-  splits: ExpenseSplit[]
+  members: IMember[],
+  expenses: IExpense[]
 ): Balance[] {
   const balanceMap = new Map<string, number>();
   
   // Initialize all members with 0 balance
   members.forEach(member => {
-    balanceMap.set(member.id, 0);
+    balanceMap.set(member._id, 0);
   });
 
   // Add amounts paid by each member
@@ -33,16 +32,18 @@ export function calculateBalances(
   });
 
   // Subtract amounts owed by each member
-  splits.forEach(split => {
-    const current = balanceMap.get(split.member_id) || 0;
-    balanceMap.set(split.member_id, current - split.amount);
+  expenses.forEach(expense => {
+    expense.splits.forEach(split => {
+      const current = balanceMap.get(split.member_id) || 0;
+      balanceMap.set(split.member_id, current - split.amount);
+    });
   });
 
   // Convert to Balance array
   return members.map(member => ({
-    memberId: member.id,
+    memberId: member._id,
     memberName: member.name,
-    balance: Number((balanceMap.get(member.id) || 0).toFixed(2))
+    balance: Number((balanceMap.get(member._id) || 0).toFixed(2))
   }));
 }
 

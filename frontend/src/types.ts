@@ -25,6 +25,7 @@ export interface Expense {
   amount: number;
   description: string;
   split_type: 'equal' | 'custom' | 'percentage';
+  receipt_url?: string;
   created_at: string;
   splits?: ExpenseSplit[];
 }

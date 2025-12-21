@@ -80,6 +80,15 @@ export default function TripDashboard({ tripId, participantId }: TripDashboardPr
     }
   };
 
+  const handleUnlockRoom = async () => {
+    try {
+      await api.unlockRoom(tripId);
+      fetchTripData();
+    } catch (error) {
+      console.error('Error unlocking room:', error);
+    }
+  };
+
   const handleRemoveParticipant = async (memberId: string) => {
     try {
       await api.removeParticipant(tripId, memberId);
@@ -169,10 +178,21 @@ export default function TripDashboard({ tripId, participantId }: TripDashboardPr
               </button>
             ) : null}
             {trip.is_locked ? (
-              <span className="bg-red-100 text-red-700 px-3 sm:px-5 py-2 sm:py-3 rounded-lg font-semibold flex items-center gap-2 shadow-lg text-sm sm:text-base">
-                <img src={lockIcon} alt="Locked" className="w-4 h-4 sm:w-5 sm:h-5" />
-                Locked
-              </span>
+              isAdmin ? (
+                <button
+                  onClick={handleUnlockRoom}
+                  className="bg-green-500 text-white px-3 sm:px-5 py-2 sm:py-3 rounded-lg hover:bg-green-600 transition flex items-center gap-2 shadow-lg text-sm sm:text-base"
+                >
+                  <img src={lockIcon} alt="Unlock" className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span className="hidden sm:inline">Unlock Room</span>
+                  <span className="sm:hidden">Unlock</span>
+                </button>
+              ) : (
+                <span className="bg-red-100 text-red-700 px-3 sm:px-5 py-2 sm:py-3 rounded-lg font-semibold flex items-center gap-2 shadow-lg text-sm sm:text-base">
+                  <img src={lockIcon} alt="Locked" className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Locked
+                </span>
+              )
             ) : null}
             <button
               onClick={handleLeaveTrip}
