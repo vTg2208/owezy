@@ -13,7 +13,6 @@ export default function Home({ onTripJoin }: HomeProps) {
   const [mode, setMode] = useState<'choose' | 'create' | 'join' | 'created'>(initialMode as 'choose' | 'create' | 'join');
   const [tripName, setTripName] = useState('');
   const [roomCode, setRoomCode] = useState('');
-  const [participantName, setParticipantName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [createdRoomCode, setCreatedRoomCode] = useState('');
@@ -43,7 +42,7 @@ export default function Home({ onTripJoin }: HomeProps) {
     }
 
     try {
-      const { tripId, roomCode, member } = await api.createTrip(tripName, participantName);
+      const { tripId, roomCode, member } = await api.createTrip(tripName, user.name);
       setCreatedRoomCode(roomCode);
       // Auto-join as host
       onTripJoin({ tripId, participantId: member.id });
@@ -69,7 +68,7 @@ export default function Home({ onTripJoin }: HomeProps) {
     }
 
     try {
-      const { tripId, member } = await api.joinTrip(roomCode.toUpperCase(), participantName);
+      const { tripId, member } = await api.joinTrip(roomCode.toUpperCase(), user.name);
       onTripJoin({ tripId, participantId: member.id });
       navigate(`/trip/${tripId}`, { state: { participantId: member.id } });
     } catch (err: any) {
@@ -84,8 +83,10 @@ export default function Home({ onTripJoin }: HomeProps) {
     setLoading(true);
     setError('');
 
+    if (!user) return;
+
     try {
-      const { tripId, member } = await api.joinTrip(createdRoomCode, participantName);
+      const { tripId, member } = await api.joinTrip(createdRoomCode, user.name);
       onTripJoin({ tripId, participantId: member.id });
       navigate(`/trip/${tripId}`);
     } catch (err: any) {
@@ -102,20 +103,20 @@ export default function Home({ onTripJoin }: HomeProps) {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative">
-      {/* Back to Dashboard Arrow */}
-      {user && (
-        <Link
-          to="/dashboard"
-          className="absolute top-4 left-4 sm:top-6 sm:left-6 p-2 sm:p-3 rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 group"
-          title="Back to Dashboard"
-        >
-          <svg className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 group-hover:text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-        </Link>
-      )}
       
-      <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 max-w-md w-full">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 max-w-md w-full relative">
+        {/* Back to Dashboard Arrow */}
+        {user && (
+          <Link
+            to="/dashboard"
+            className="absolute top-4 left-4 p-2 rounded-full hover:bg-gray-100 active:bg-gray-200 transition-all group"
+            title="Back to Dashboard"
+          >
+            <svg className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 group-hover:text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </Link>
+        )}
         <div className="text-center mb-6 sm:mb-8">
           
           {/* User Info */}
@@ -182,19 +183,6 @@ export default function Home({ onTripJoin }: HomeProps) {
                 required
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Your Name (Host)
-              </label>
-              <input
-                type="text"
-                value={participantName}
-                onChange={(e) => setParticipantName(e.target.value)}
-                placeholder="Enter your name"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                required
-              />
-            </div>
             <button
               type="submit"
               disabled={loading}
@@ -225,19 +213,6 @@ export default function Home({ onTripJoin }: HomeProps) {
                 placeholder="Enter 6-digit code"
                 maxLength={6}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg font-mono text-lg text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent uppercase"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Your Name
-              </label>
-              <input
-                type="text"
-                value={participantName}
-                onChange={(e) => setParticipantName(e.target.value)}
-                placeholder="Enter your name"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 required
               />
             </div>
@@ -278,23 +253,9 @@ export default function Home({ onTripJoin }: HomeProps) {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Your Name (Host)
-              </label>
-              <input
-                type="text"
-                value={participantName}
-                onChange={(e) => setParticipantName(e.target.value)}
-                placeholder="Enter your name"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                required
-              />
-            </div>
-
             <button
               onClick={handleJoinAsHost}
-              disabled={loading || !participantName}
+              disabled={loading}
               className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition disabled:opacity-50"
             >
               {loading ? 'Joining...' : 'Continue to Trip'}

@@ -63,6 +63,17 @@ router.post('/trips/join', authenticateToken, (req: AuthRequest, res: Response, 
       return;
     }
 
+    // Check if user is already a member
+    const existingUserMember = db.prepare('SELECT * FROM members WHERE trip_id = ? AND user_id = ?').get(trip.id, req.userId) as Member | undefined;
+    if (existingUserMember) {
+      res.status(200).json({
+        tripId: trip.id,
+        tripName: trip.name,
+        member: { id: existingUserMember.id, name: existingUserMember.name, isAdmin: existingUserMember.is_admin === 1 }
+      });
+      return;
+    }
+
     // Check for duplicate names
     const existingMember = db.prepare('SELECT * FROM members WHERE trip_id = ? AND LOWER(name) = LOWER(?)').get(trip.id, memberName) as Member | undefined;
     if (existingMember) {
@@ -253,12 +264,32 @@ router.delete('/trips/:tripId/members/:memberId', authenticateToken, (req: AuthR
       return;
     }
 
-    if (member.is_admin) {
-      res.status(403).json({ error: 'Cannot remove admin' });
+    // Get the requester's member record for this trip
+    const requester = db.prepare('SELECT * FROM members WHERE trip_id = ? AND user_id = ?').get(tripId, req.userId) as Member | undefined;
+    
+    if (!requester) {
+      res.status(403).json({ error: 'You are not a member of this trip' });
+      return;
+    }
+
+    const isSelf = requester.id === memberId;
+    const isAdmin = requester.is_admin === 1;
+
+    // Only allow if removing self or if admin is removing someone else
+    if (!isSelf && !isAdmin) {
+      res.status(403).json({ error: 'Only admin can remove other members' });
       return;
     }
     
-    db.prepare('DELETE FROM members WHERE id = ?').run(memberId);
+    try {
+      db.prepare('DELETE FROM members WHERE id = ?').run(memberId);
+    } catch (err: any) {
+      if (err.message.includes('FOREIGN KEY constraint failed')) {
+        res.status(400).json({ error: 'Cannot remove member with associated expenses or messages.' });
+        return;
+      }
+      throw err;
+    }
     
     res.json({ success: true });
   } catch (error) {

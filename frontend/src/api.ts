@@ -60,7 +60,10 @@ export const api = {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
-    if (!res.ok) throw new Error('Failed to remove participant');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || 'Failed to remove participant');
+    }
     return res.json();
   },
 

@@ -93,10 +93,16 @@ export default function TripDashboard({ tripId, participantId }: TripDashboardPr
     fetchTripData();
   };
 
-  const handleLeaveTrip = () => {
+  const handleLeaveTrip = async () => {
     if (confirm('Are you sure you want to leave this trip?')) {
-      localStorage.removeItem('currentTrip');
-      navigate('/dashboard');
+      try {
+        await api.removeParticipant(tripId, participantId);
+        localStorage.removeItem('currentTrip');
+        navigate('/dashboard');
+      } catch (error: any) {
+        console.error('Error leaving trip:', error);
+        alert(error.message || 'Failed to leave trip. Please try again.');
+      }
     }
   };
 
