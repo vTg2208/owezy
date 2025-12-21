@@ -96,7 +96,3 @@ VITE_FIREBASE_APP_ID=your_app_id
 ## Author
 
 **Vishnu Vardhan Theegela**
-
-##  License
-
-This project is licensed under the MIT License.
