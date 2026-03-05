@@ -4,6 +4,7 @@ import cors from 'cors';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
 import { initializeDatabase } from './database';
+import { startCronJobs } from './cron/keepAlive';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,6 +47,7 @@ initializeDatabase().then(() => {
   app.listen(PORT, () => {
     console.log(`[SERVER] Server running on http://localhost:${PORT}`);
     console.log(`API endpoints: http://localhost:${PORT}/api`);
+    startCronJobs(); 
   });
 }).catch((err) => {
   console.error('[DATABASE] Failed to initialize:', err);

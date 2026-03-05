@@ -7,7 +7,17 @@
     "build": "cd backend && npm run build",
     "start": "cd backend && npm start"
   },
-  "keywords": ["expense", "trip", "sharing"],
+  "keywords": [
+    "expense",
+    "trip",
+    "sharing"
+  ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "node-cron": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.11"
+  }
 }
