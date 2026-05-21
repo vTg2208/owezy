@@ -1,9 +1,15 @@
-import cron from 'node-cron';
 import https from 'https';
 import http from 'http';
 import mongoose from 'mongoose';
 
 const BACKEND_URL = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/tripexpense';
+const SERVER_PING_INTERVAL_MS = 10 * 60 * 1000;
+const DATABASE_PING_INTERVAL_MS = 60 * 1000;
+
+let heartbeatStarted = false;
+let serverPingTimer: NodeJS.Timeout | null = null;
+let databasePingTimer: NodeJS.Timeout | null = null;
 
 // Function to keep the server alive
 const pingServer = () => {
@@ -20,32 +26,53 @@ const pingServer = () => {
 
 // Function to keep the database connection alive
 const pingDatabase = async () => {
-    try {
-        if (mongoose.connection.readyState === 1) { // 1 = connected
-            await mongoose.connection.db?.command({ ping: 1 });
-            console.log('[CRON] Database ping successful');
-        } else {
-            console.log('[CRON] Database not connected, skipping ping');
-        }
-    } catch (error) {
-        console.error('[CRON] Database ping failed:', error);
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      console.log('[CRON] Database connection is not active, reconnecting...');
+      await mongoose.connect(MONGODB_URI);
     }
-}
+
+    await mongoose.connection.db?.command({ ping: 1 });
+    console.log('[CRON] Database ping successful');
+  } catch (error) {
+    console.error('[CRON] Database ping failed:', error);
+    try {
+      if (mongoose.connection.readyState !== 1) {
+        await mongoose.disconnect();
+      }
+    } catch (disconnectError) {
+      console.error('[CRON] Database reconnect cleanup failed:', disconnectError);
+    }
+  }
+};
 
 // Schedule tasks
 export const startCronJobs = () => {
-  // Ping server every 14 minutes to prevent Render free tier from sleeping (it sleeps after 15 mins of inactivity)
-  cron.schedule('*/14 * * * *', () => {
-    pingServer();
-  });
+  if (heartbeatStarted) {
+    return;
+  }
 
-  // Ping database every 5 minutes to keep connection active
-  cron.schedule('*/5 * * * *', () => {
-    pingDatabase();
-  });
+  heartbeatStarted = true;
+
+  // Keep the app and MongoDB warm with frequent heartbeats so neither side goes idle.
+  serverPingTimer = setInterval(() => {
+    pingServer();
+  }, SERVER_PING_INTERVAL_MS);
+
+  databasePingTimer = setInterval(() => {
+    void pingDatabase();
+  }, DATABASE_PING_INTERVAL_MS);
+
+  if (serverPingTimer.unref) {
+    serverPingTimer.unref();
+  }
+
+  if (databasePingTimer.unref) {
+    databasePingTimer.unref();
+  }
   
-  console.log('[CRON] Jobs scheduled: Server ping (every 14m), Database ping (every 5m)');
+  console.log('[CRON] Jobs scheduled: Server ping (every 10m), Database ping (every 1m)');
 
   // Run immediately on startup to verify 
-  pingDatabase();
+  void pingDatabase();
 };
