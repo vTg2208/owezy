@@ -11,10 +11,13 @@ class MemoryAccountRepository implements AccountRepository {
   readonly users = new Map<string, AccountUser & { status: 'active' | 'deleting' | 'deleted' }>();
   readonly memberships = new Map<string, {
     firebaseUid: string | null;
+    tripId: string;
     displayName: string;
     role: 'owner' | 'member';
     status: 'active' | 'anonymized';
+    createdAt: Date;
   }>();
+  readonly tripOwners = new Map<string, string>();
 
   async upsertUser(firebaseUid: string, email: string, name: string): Promise<AccountUser> {
     const current = this.users.get(firebaseUid);
@@ -45,6 +48,22 @@ class MemoryAccountRepository implements AccountRepository {
     user.email = `deleted+${user.id}@anonymized.invalid`;
     user.name = 'Deleted user';
     user.status = user.status === 'deleted' ? 'deleted' : 'deleting';
+    for (const [membershipId, membership] of this.memberships) {
+      if (membership.firebaseUid !== firebaseUid || membership.role !== 'owner') continue;
+      const successor = [...this.memberships.entries()]
+        .filter(([, candidate]) => candidate.tripId === membership.tripId
+          && candidate.status === 'active'
+          && candidate.firebaseUid !== firebaseUid)
+        .sort((left, right) => left[1].createdAt.getTime() - right[1].createdAt.getTime()
+          || left[0].localeCompare(right[0]))[0];
+      if (successor) {
+        membership.role = 'member';
+        successor[1].role = 'owner';
+        this.tripOwners.set(membership.tripId, successor[0]);
+      } else {
+        this.tripOwners.set(membership.tripId, membershipId);
+      }
+    }
     for (const membership of this.memberships.values()) {
       if (membership.firebaseUid === firebaseUid) {
         membership.firebaseUid = null;
@@ -99,12 +118,20 @@ describe('AccountService', () => {
     const repository = new MemoryAccountRepository();
     await repository.upsertUser('firebase-1', 'person@example.com', 'Person');
     repository.memberships.set('member-1', {
-      firebaseUid: 'firebase-1', displayName: 'Person', role: 'member', status: 'active',
+      firebaseUid: 'firebase-1', tripId: 'trip-1', displayName: 'Person', role: 'owner', status: 'active',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
     });
+    repository.memberships.set('member-2', {
+      firebaseUid: 'firebase-2', tripId: 'trip-1', displayName: 'Successor', role: 'member', status: 'active',
+      createdAt: new Date('2026-08-02T00:00:00.000Z'),
+    });
+    repository.tripOwners.set('trip-1', 'member-1');
     const firebase = new MemoryFirebaseAuth();
     const service = new AccountService(repository, {
       async deleteUser(uid) {
-        firebase.postgresWasAnonymized = repository.memberships.get('member-1')?.status === 'anonymized';
+        firebase.postgresWasAnonymized = repository.memberships.get('member-1')?.status === 'anonymized'
+          && repository.memberships.get('member-2')?.role === 'owner'
+          && repository.tripOwners.get('trip-1') === 'member-2';
         await firebase.deleteUser(uid);
       },
     });
@@ -118,10 +145,14 @@ describe('AccountService', () => {
     });
     expect(repository.memberships.get('member-1')).toEqual({
       firebaseUid: null,
+      tripId: 'trip-1',
       displayName: 'Former member member-1',
       role: 'member',
       status: 'anonymized',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
     });
+    expect(repository.memberships.get('member-2')).toMatchObject({ role: 'owner', status: 'active' });
+    expect(repository.tripOwners.get('trip-1')).toBe('member-2');
     expect(firebase.deletedUids.has('firebase-1')).toBe(true);
   });
 

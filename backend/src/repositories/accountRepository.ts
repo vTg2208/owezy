@@ -113,6 +113,76 @@ export class PostgresAccountRepository implements AccountRepository {
       if (!user) return { userExists: false, firebaseDeleted: false };
 
       if (user.account_status !== 'deleted') {
+        const ownerships = await database.query(
+          `SELECT owner.id AS owner_membership_id,
+                  owner.trip_id,
+                  successor.id AS successor_membership_id
+             FROM trip_memberships owner
+             JOIN trips trip ON trip.id = owner.trip_id
+             LEFT JOIN LATERAL (
+               SELECT candidate.id
+                 FROM trip_memberships candidate
+                WHERE candidate.trip_id = owner.trip_id
+                  AND candidate.id <> owner.id
+                  AND candidate.user_id IS NOT NULL
+                  AND candidate.status = 'active'
+                ORDER BY candidate.created_at, candidate.id
+                LIMIT 1
+                FOR UPDATE
+             ) successor ON true
+            WHERE owner.user_id = $1
+              AND owner.role = 'owner'
+            ORDER BY owner.trip_id
+            FOR UPDATE OF owner, trip`,
+          [user.id],
+        );
+
+        for (const ownership of ownerships.rows) {
+          if (!ownership.successor_membership_id) continue;
+
+          const demoted = await database.query(
+            `UPDATE trip_memberships
+                SET role = 'member'
+              WHERE id = $1
+                AND trip_id = $2
+                AND role = 'owner'`,
+            [ownership.owner_membership_id, ownership.trip_id],
+          );
+          if (demoted.rowCount !== 1) {
+            throw new Error(`Failed to demote owner for trip ${ownership.trip_id}`);
+          }
+
+          const promoted = await database.query(
+            `UPDATE trip_memberships
+                SET role = 'owner'
+              WHERE id = $1
+                AND trip_id = $2
+                AND status = 'active'
+                AND user_id IS NOT NULL
+                AND role = 'member'`,
+            [ownership.successor_membership_id, ownership.trip_id],
+          );
+          if (promoted.rowCount !== 1) {
+            throw new Error(`Failed to promote successor for trip ${ownership.trip_id}`);
+          }
+
+          const relinked = await database.query(
+            `UPDATE trips
+                SET owner_membership_id = $2,
+                    updated_at = now()
+              WHERE id = $1
+                AND owner_membership_id = $3`,
+            [
+              ownership.trip_id,
+              ownership.successor_membership_id,
+              ownership.owner_membership_id,
+            ],
+          );
+          if (relinked.rowCount !== 1) {
+            throw new Error(`Failed to link successor for trip ${ownership.trip_id}`);
+          }
+        }
+
         await database.query(
           `UPDATE trip_memberships
               SET user_id = NULL,
