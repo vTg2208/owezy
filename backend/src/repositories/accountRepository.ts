@@ -20,6 +20,29 @@ interface UserRow {
   created_at: Date;
 }
 
+const ACCOUNT_DELETION_TRANSACTION_ATTEMPTS = 3;
+
+function isPostgresDeadlock(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && error.code === '40P01';
+}
+
+async function retryPostgresDeadlock<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; attempt <= ACCOUNT_DELETION_TRANSACTION_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isPostgresDeadlock(error) || attempt === ACCOUNT_DELETION_TRANSACTION_ATTEMPTS) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error('Account deletion transaction attempts exhausted');
+}
+
 function mapUser(row: UserRow): AccountUser {
   return {
     id: row.id,
@@ -101,7 +124,7 @@ export class PostgresAccountRepository implements AccountRepository {
   }
 
   beginAccountDeletion(firebaseUid: string): Promise<AccountDeletionState> {
-    return this.transaction(async (database) => {
+    return retryPostgresDeadlock(() => this.transaction(async (database) => {
       const result = await database.query(
         `SELECT id, account_status
            FROM users
@@ -205,7 +228,7 @@ export class PostgresAccountRepository implements AccountRepository {
       }
 
       return { userExists: true, firebaseDeleted: user.account_status === 'deleted' };
-    });
+    }));
   }
 
   async markFirebaseDeleted(firebaseUid: string): Promise<void> {

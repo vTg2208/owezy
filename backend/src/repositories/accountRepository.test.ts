@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AccountService } from '../services/accountService';
 import { PostgresAccountRepository } from './accountRepository';
 
 interface Result {
@@ -136,6 +137,30 @@ class AccountQueryBoundary {
   }
 }
 
+class ConcurrentDeletionBoundary extends AccountQueryBoundary {
+  private firstOwnershipQuery = true;
+
+  constructor(
+    private readonly deadlockVictim: boolean,
+    private readonly meetConcurrentDeletion: () => Promise<void>,
+  ) {
+    super();
+  }
+
+  override async query(text: string, values?: unknown[]): Promise<Result> {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (this.firstOwnershipQuery
+      && normalized.startsWith('SELECT owner.id AS owner_membership_id')) {
+      this.firstOwnershipQuery = false;
+      await this.meetConcurrentDeletion();
+      if (this.deadlockVictim) {
+        throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+      }
+    }
+    return super.query(text, values);
+  }
+}
+
 describe('PostgresAccountRepository', () => {
   it('upserts by Firebase UID and maps the internal UUID separately', async () => {
     const database = new AccountQueryBoundary();
@@ -204,5 +229,83 @@ describe('PostgresAccountRepository', () => {
       status: 'anonymized',
     });
     expect(database.trip.ownerMembershipId).toBe('owner-1');
+  });
+
+  it('retries the database phase when concurrent account deletions deadlock', async () => {
+    let arrivals = 0;
+    let releaseConcurrentQueries!: () => void;
+    const concurrentQueries = new Promise<void>((resolve) => {
+      releaseConcurrentQueries = resolve;
+    });
+    const meetConcurrentDeletion = async () => {
+      arrivals += 1;
+      if (arrivals === 2) releaseConcurrentQueries();
+      await concurrentQueries;
+    };
+    const first = new ConcurrentDeletionBoundary(true, meetConcurrentDeletion);
+    const second = new ConcurrentDeletionBoundary(false, meetConcurrentDeletion);
+    let firstTransactionAttempts = 0;
+    let secondTransactionAttempts = 0;
+    const firstRepository = new PostgresAccountRepository(first, async (work) => {
+      firstTransactionAttempts += 1;
+      return work(first);
+    });
+    const secondRepository = new PostgresAccountRepository(second, async (work) => {
+      secondTransactionAttempts += 1;
+      return work(second);
+    });
+    let firstFirebaseDeletions = 0;
+    let secondFirebaseDeletions = 0;
+    const firstService = new AccountService(firstRepository, {
+      async deleteUser() {
+        firstFirebaseDeletions += 1;
+      },
+    });
+    const secondService = new AccountService(secondRepository, {
+      async deleteUser() {
+        secondFirebaseDeletions += 1;
+      },
+    });
+
+    await expect(Promise.all([
+      firstService.deleteAccount('firebase-1'),
+      secondService.deleteAccount('firebase-2'),
+    ])).resolves.toEqual([
+      { success: true },
+      { success: true },
+    ]);
+
+    expect(firstTransactionAttempts).toBe(2);
+    expect(secondTransactionAttempts).toBe(1);
+    expect(firstFirebaseDeletions).toBe(1);
+    expect(secondFirebaseDeletions).toBe(1);
+    expect(first.membership.status).toBe('anonymized');
+    expect(second.membership.status).toBe('anonymized');
+  });
+
+  it('stops after three database deadlocks', async () => {
+    const database = new AccountQueryBoundary();
+    const deadlock = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    let transactionAttempts = 0;
+    const repository = new PostgresAccountRepository(database, async () => {
+      transactionAttempts += 1;
+      throw deadlock;
+    });
+
+    await expect(repository.beginAccountDeletion('firebase-1')).rejects.toBe(deadlock);
+    expect(transactionAttempts).toBe(3);
+  });
+
+  it('does not retry a non-deadlock database failure', async () => {
+    const database = new AccountQueryBoundary();
+    const constraintFailure = Object.assign(new Error('constraint failure'), { code: '23514' });
+    let transactionAttempts = 0;
+    const repository = new PostgresAccountRepository(database, async () => {
+      transactionAttempts += 1;
+      throw constraintFailure;
+    });
+
+    await expect(repository.beginAccountDeletion('firebase-1')).rejects.toBe(constraintFailure);
+    expect(transactionAttempts).toBe(1);
   });
 });
