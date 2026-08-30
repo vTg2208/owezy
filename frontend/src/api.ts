@@ -2,8 +2,9 @@
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 import { auth } from './firebase';
 
-async function getAuthHeaders() {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+async function getAuthHeaders(contentType: string | null = 'application/json') {
+  const headers: Record<string, string> = {};
+  if (contentType) headers['Content-Type'] = contentType;
   const user = auth.currentUser;
   if (user) {
     const token = await user.getIdToken();
@@ -117,7 +118,7 @@ export const api = {
     amount: number;
     splitType?: 'equal' | 'custom' | 'percentage';
     splits?: { participantId: string; amount: number }[];
-    receiptUrl?: string;
+    receiptId?: string;
   }) => {
     const res = await fetch(`${API_BASE}/trips/${tripId}/expenses`, {
       method: 'POST',
@@ -126,6 +127,40 @@ export const api = {
     });
     if (!res.ok) throw new Error('Failed to add expense');
     return res.json();
+  },
+
+  uploadReceipt: async (tripId: string, file: File): Promise<{
+    receipt_id: string;
+    receipt_url: string;
+    content_type: string;
+    byte_size: number;
+    checksum_sha256: string;
+    status: 'pending';
+    pending_expires_at: string;
+  }> => {
+    const res = await fetch(`${API_BASE}/trips/${tripId}/receipts`, {
+      method: 'POST',
+      headers: await getAuthHeaders(file.type || 'application/octet-stream'),
+      body: file,
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || 'Failed to upload receipt');
+    }
+    return res.json();
+  },
+
+  readReceipt: async (receiptUrl: string): Promise<Blob> => {
+    const normalizedBase = API_BASE.replace(/\/$/, '');
+    const url = receiptUrl.startsWith('/api/')
+      ? `${normalizedBase}${receiptUrl.slice('/api'.length)}`
+      : receiptUrl;
+    const res = await fetch(url, { headers: await getAuthHeaders(null) });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || 'Failed to load receipt');
+    }
+    return res.blob();
   },
 
   // Get balances

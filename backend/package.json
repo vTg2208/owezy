@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "migrate": "tsx src/db/migrate.ts",
+    "migrate:mongo": "tsx src/scripts/migrate-mongo-to-postgres.ts",
     "postinstall": "npm run build",
     "start": "node dist/server.js",
     "test": "vitest run src"
@@ -28,6 +29,7 @@
     "express": "^4.18.2",
     "firebase": "^12.7.0",
     "firebase-admin": "^13.6.0",
+    "mongodb": "^7.0.0",
     "mongoose": "^9.0.2",
     "nanoid": "^3.3.7",
     "pg": "^8.23.0",

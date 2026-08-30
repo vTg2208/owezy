@@ -148,7 +148,23 @@ describe('ExpenseService', () => {
     })).rejects.toMatchObject({ status: 403 });
   });
 
-  it('rejects receipt metadata until the Task 3 storage boundary exists', async () => {
+  it('forwards a validated pending receipt ID with the authenticated payer', async () => {
+    const repository = new MemoryExpenseRepository();
+    const expenseService = service(repository);
+    const input = {
+      description: 'Meal', amount: 10, splitType: 'equal' as const,
+      splits: [{ participantId: 'member-a', amount: 10 }],
+    };
+
+    await expenseService.createExpense('user-a', 'trip-1', { ...input, receiptId: 'receipt-1' });
+
+    expect(repository.expenses[0]).toMatchObject({
+      paidByMembershipId: 'member-a',
+      receiptId: 'receipt-1',
+    });
+  });
+
+  it('rejects malformed receipt IDs and legacy receipt URLs', async () => {
     const expenseService = service();
     const input = {
       description: 'Meal', amount: 10, splitType: 'equal' as const,
@@ -156,14 +172,17 @@ describe('ExpenseService', () => {
     };
 
     await expect(expenseService.createExpense('user-a', 'trip-1', {
-      ...input, receiptId: 'receipt-1',
-    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+      ...input, receiptId: '../foreign-receipt',
+    })).rejects.toMatchObject({ status: 400, message: 'receiptId is invalid' });
     await expect(expenseService.createExpense('user-a', 'trip-1', {
       ...input, receiptUrl: 'data:image/png;base64,bytes',
-    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+    })).rejects.toMatchObject({
+      status: 400,
+      message: 'receiptUrl is not accepted; upload the receipt first and send receiptId',
+    });
     await expect(expenseService.createExpense('user-a', 'trip-1', {
       ...input, receiptId: { malformed: true } as unknown as string,
-    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+    })).rejects.toMatchObject({ status: 400, message: 'receiptId is invalid' });
   });
 });
 

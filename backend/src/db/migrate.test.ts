@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyPendingMigrations, type Migration } from './migrate';
+import { join } from 'node:path';
+import { applyPendingMigrations, loadMigrations, type Migration } from './migrate';
 
 describe('applyPendingMigrations', () => {
   it('runs only unapplied migrations and records them atomically', async () => {
@@ -87,5 +88,16 @@ describe('applyPendingMigrations', () => {
 
     await expect(applyPendingMigrations(database, [migration])).rejects.toThrow('syntax error');
     expect(queries.at(-1)).toBe('ROLLBACK');
+  });
+
+  it('loads the receipt storage upgrade after the authorized services migration', () => {
+    const migrations = loadMigrations(join(__dirname, 'migrations'));
+
+    expect(migrations.map(({ id }) => id)).toEqual([
+      '001_initial.sql',
+      '002_preserve_membership_history.sql',
+      '003_authorized_services.sql',
+      '004_receipt_storage.sql',
+    ]);
   });
 });

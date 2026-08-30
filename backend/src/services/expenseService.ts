@@ -108,6 +108,14 @@ function containsReceiptMetadata(value: unknown): boolean {
   return typeof value === 'string' ? value.trim().length > 0 : true;
 }
 
+function parseReceiptId(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
+    throw new ServiceError(400, 'receiptId is invalid');
+  }
+  return value;
+}
+
 function allocatePercentages(
   totalMinor: bigint,
   splits: Array<{ membershipId: string; basisPoints: number; index: number }>,
@@ -147,9 +155,13 @@ export class ExpenseService {
     const actor = await this.repository.findActiveMembership(firebaseUid, tripId);
     if (!actor) throw new ServiceError(403, 'You are not a member of this trip');
 
-    if (containsReceiptMetadata(input.receiptId) || containsReceiptMetadata(input.receiptUrl)) {
-      throw new ServiceError(400, 'Receipt uploads are not supported yet');
+    if (containsReceiptMetadata(input.receiptUrl)) {
+      throw new ServiceError(
+        400,
+        'receiptUrl is not accepted; upload the receipt first and send receiptId',
+      );
     }
+    const receiptId = parseReceiptId(input.receiptId);
 
     const description = input.description?.trim();
     if (!description) throw new ServiceError(400, 'description and amount are required');
@@ -220,6 +232,7 @@ export class ExpenseService {
       totalMinor,
       splitType,
       splits: allocations,
+      ...(receiptId ? { receiptId } : {}),
     });
     return { expenseId, splitType, memberCount: allocations.length };
   }

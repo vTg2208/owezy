@@ -7,14 +7,26 @@ class ExpenseQueryBoundary {
   splitsInsertedInTransaction = false;
   activeMembershipsLocked = false;
   confirmedPaymentsOnly = false;
+  receiptLockedInTransaction = false;
+  receiptAttachedInTransaction = false;
+  receiptAttachedAfterSplits = false;
+  receiptLookupValues: unknown[] | undefined;
+  receiptRows: Record<string, unknown>[] = [];
   expenseRows: Record<string, unknown>[] = [];
   paymentRows: Record<string, unknown>[] = [];
 
-  async query(text: string) {
+  async query(text: string, values?: unknown[]) {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.startsWith('SELECT id FROM trip_memberships') && sql.includes('FOR UPDATE')) {
       this.activeMembershipsLocked = this.transactionOpen && sql.includes("status = 'active'");
       return { rows: [{ id: 'member-a' }, { id: 'member-b' }], rowCount: 2 };
+    }
+    if (sql.startsWith('SELECT id FROM receipts') && sql.includes('FOR UPDATE')) {
+      this.receiptLockedInTransaction = this.transactionOpen
+        && sql.includes("status = 'pending'")
+        && sql.includes('pending_expires_at > now()');
+      this.receiptLookupValues = values;
+      return { rows: this.receiptRows, rowCount: this.receiptRows.length };
     }
     if (sql.startsWith('INSERT INTO expenses')) {
       this.expenseInsertedInTransaction = this.transactionOpen;
@@ -23,6 +35,11 @@ class ExpenseQueryBoundary {
     if (sql.startsWith('INSERT INTO expense_splits')) {
       this.splitsInsertedInTransaction = this.transactionOpen;
       return { rows: [], rowCount: 2 };
+    }
+    if (sql.startsWith('UPDATE receipts')) {
+      this.receiptAttachedInTransaction = this.transactionOpen;
+      this.receiptAttachedAfterSplits = this.splitsInsertedInTransaction;
+      return { rows: [], rowCount: 1 };
     }
     if (sql.includes('AS authorized')) return { rows: [{ authorized: true }], rowCount: 1 };
     if (sql.includes('FROM trip_memberships m') && !sql.includes('JOIN users')) {
@@ -107,16 +124,54 @@ describe('PostgresExpenseRepository', () => {
     }]);
   });
 
-  it('defensively rejects unsupported receipt metadata instead of discarding it', async () => {
+  it('locks and attaches a same-trip, same-uploader pending receipt in the expense transaction', async () => {
     const database = new ExpenseQueryBoundary();
-    const repository = new PostgresExpenseRepository(database, async (work) => work(database));
+    database.receiptRows = [{ id: 'receipt-1' }];
+    const repository = new PostgresExpenseRepository(database, async (work) => {
+      database.transactionOpen = true;
+      try {
+        return await work(database);
+      } finally {
+        database.transactionOpen = false;
+      }
+    });
 
-    await expect(repository.createExpense({
+    await repository.createExpense({
       id: 'expense-1', tripId: 'trip-1', paidByMembershipId: 'member-a', description: 'Meal',
       totalMinor: 1000n, splitType: 'equal', receiptId: 'receipt-1', splits: [
         { membershipId: 'member-a', amountMinor: 500n },
         { membershipId: 'member-b', amountMinor: 500n },
       ],
-    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+    });
+
+    expect(database.receiptLockedInTransaction).toBe(true);
+    expect(database.receiptLookupValues).toEqual(['receipt-1', 'trip-1', 'member-a']);
+    expect(database.receiptAttachedInTransaction).toBe(true);
+    expect(database.receiptAttachedAfterSplits).toBe(true);
+  });
+
+  it('rejects a missing, foreign, expired, or already-attached receipt before inserting the expense', async () => {
+    const database = new ExpenseQueryBoundary();
+    const repository = new PostgresExpenseRepository(database, async (work) => {
+      database.transactionOpen = true;
+      try {
+        return await work(database);
+      } finally {
+        database.transactionOpen = false;
+      }
+    });
+
+    await expect(repository.createExpense({
+      id: 'expense-1', tripId: 'trip-1', paidByMembershipId: 'member-a', description: 'Meal',
+      totalMinor: 1000n, splitType: 'equal', receiptId: 'receipt-foreign', splits: [
+        { membershipId: 'member-a', amountMinor: 500n },
+        { membershipId: 'member-b', amountMinor: 500n },
+      ],
+    })).rejects.toMatchObject({
+      status: 400,
+      message: 'Receipt is not attachable by this member for this trip',
+    });
+    expect(database.receiptLockedInTransaction).toBe(true);
+    expect(database.expenseInsertedInTransaction).toBe(false);
   });
 });

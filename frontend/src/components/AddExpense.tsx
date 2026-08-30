@@ -33,48 +33,6 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
     setSelectedParticipants(participants.map(p => p.id));
   });
 
-  const compressImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800;
-          const MAX_HEIGHT = 800;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_WIDTH) {
-              height *= MAX_WIDTH / width;
-              width = MAX_WIDTH;
-            }
-          } else {
-            if (height > MAX_HEIGHT) {
-              width *= MAX_HEIGHT / height;
-              height = MAX_HEIGHT;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.7));
-          } else {
-            reject(new Error('Failed to get canvas context'));
-          }
-        };
-        img.onerror = (error) => reject(error);
-      };
-      reader.onerror = (error) => reject(error);
-    });
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -127,14 +85,10 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
             amount: amountNum / selectedParticipants.length
           }));
 
-      let uploadedUrl = '';
+      let receiptId: string | undefined;
       if (receiptFile) {
-        try {
-          uploadedUrl = await compressImage(receiptFile);
-        } catch (err) {
-          console.error('Error compressing image:', err);
-          throw new Error('Failed to process image. Please try a smaller image.');
-        }
+        const uploadedReceipt = await api.uploadReceipt(tripId, receiptFile);
+        receiptId = uploadedReceipt.receipt_id;
       }
 
       await api.addExpense(tripId, {
@@ -143,7 +97,7 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
         amount: amountNum,
         splitType,
         splits,
-        receiptUrl: uploadedUrl
+        ...(receiptId ? { receiptId } : {})
       });
 
       // Reset form
@@ -298,10 +252,16 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
           </label>
           <input
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 const file = e.target.files[0];
+                if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+                  alert('Please choose a JPEG, PNG, or WebP image.');
+                  e.target.value = '';
+                  setReceiptFile(null);
+                  return;
+                }
                 // 5MB limit
                 if (file.size > 5 * 1024 * 1024) {
                   alert('File size exceeds 5MB limit. Please choose a smaller file.');

@@ -1,25 +1,46 @@
-import { NextFunction, RequestHandler, Response, Router } from 'express';
+import express, { NextFunction, RequestHandler, Response, Router } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { PostgresExpenseRepository } from '../repositories/expenseRepository';
 import { PostgresMessageRepository } from '../repositories/messageRepository';
+import { PostgresReceiptRepository } from '../repositories/receiptRepository';
 import { PostgresTripRepository } from '../repositories/tripRepository';
 import { ServiceError } from '../services/errors';
 import { ExpenseService, minorToLegacyNumber } from '../services/expenseService';
 import { MessageService } from '../services/messageService';
+import { ReceiptService } from '../services/receiptService';
 import { TripService } from '../services/tripService';
+import {
+  DisabledReceiptStorage,
+  getReceiptStorageConfig,
+  LocalReceiptStorage,
+} from '../storage/receiptStorage';
 
 export interface ApiRoutesDependencies {
   tripService: Pick<TripService, 'createTrip' | 'joinTrip' | 'getTrip' | 'setLocked' | 'removeMember'>;
   expenseService: Pick<ExpenseService, 'createExpense' | 'getBalances'>;
   messageService: Pick<MessageService, 'sendMessage' | 'listMessages'>;
+  receiptService: Pick<ReceiptService, 'uploadReceipt' | 'readReceipt'>;
+  receiptMaxBytes: number;
   authenticate: RequestHandler;
 }
 
 function defaultDependencies(): ApiRoutesDependencies {
+  const tripRepository = new PostgresTripRepository();
+  const receiptConfig = getReceiptStorageConfig();
+  const receiptStorage = receiptConfig.root
+    ? new LocalReceiptStorage(receiptConfig.root)
+    : new DisabledReceiptStorage();
   return {
-    tripService: new TripService(new PostgresTripRepository()),
+    tripService: new TripService(tripRepository),
     expenseService: new ExpenseService(new PostgresExpenseRepository()),
     messageService: new MessageService(new PostgresMessageRepository()),
+    receiptService: new ReceiptService(
+      tripRepository,
+      new PostgresReceiptRepository(),
+      receiptStorage,
+      receiptConfig,
+    ),
+    receiptMaxBytes: receiptConfig.maxBytes,
     authenticate: authenticateToken,
   };
 }
@@ -34,7 +55,15 @@ function handleError(error: unknown, response: Response, next: NextFunction): vo
 
 export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDependencies()): Router {
   const router = Router();
-  const { tripService, expenseService, messageService, authenticate } = dependencies;
+  const {
+    tripService,
+    expenseService,
+    messageService,
+    receiptService,
+    receiptMaxBytes,
+    authenticate,
+  } = dependencies;
+  const receiptBody = express.raw({ type: () => true, limit: receiptMaxBytes });
 
   router.post('/trips', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
@@ -103,6 +132,58 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
       handleError(error, response, next);
     }
   });
+
+  router.post(
+    '/trips/:tripId/receipts',
+    authenticate,
+    receiptBody,
+    async (request: AuthRequest, response: Response, next: NextFunction) => {
+      try {
+        const receipt = await receiptService.uploadReceipt(
+          request.userId!,
+          request.params.tripId,
+          request.header('content-type'),
+          Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+        );
+        response.status(201).json({
+          receipt_id: receipt.receiptId,
+          receipt_url: receipt.receiptUrl,
+          content_type: receipt.contentType,
+          byte_size: receipt.byteSize,
+          checksum_sha256: receipt.checksumSha256,
+          status: receipt.status,
+          pending_expires_at: receipt.pendingExpiresAt,
+        });
+      } catch (error) {
+        handleError(error, response, next);
+      }
+    },
+  );
+
+  router.get(
+    '/trips/:tripId/receipts/:receiptId',
+    authenticate,
+    async (request: AuthRequest, response: Response, next: NextFunction) => {
+      try {
+        const receipt = await receiptService.readReceipt(
+          request.userId!,
+          request.params.tripId,
+          request.params.receiptId,
+        );
+        response.status(200);
+        response.set({
+          'Cache-Control': 'private, no-store',
+          'Content-Length': String(receipt.byteSize),
+          'Content-Type': receipt.contentType,
+          'X-Content-Type-Options': 'nosniff',
+          'X-Receipt-SHA256': receipt.checksumSha256,
+        });
+        response.end(receipt.bytes);
+      } catch (error) {
+        handleError(error, response, next);
+      }
+    },
+  );
 
   router.get('/trips/:tripId/balances', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
@@ -173,6 +254,19 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
     } catch (error) {
       handleError(error, response, next);
     }
+  });
+
+  router.use((error: unknown, _request: AuthRequest, response: Response, next: NextFunction) => {
+    if (
+      typeof error === 'object'
+      && error !== null
+      && 'type' in error
+      && error.type === 'entity.too.large'
+    ) {
+      response.status(413).json({ error: `Receipt image exceeds the ${receiptMaxBytes} byte limit` });
+      return;
+    }
+    next(error);
   });
 
   return router;

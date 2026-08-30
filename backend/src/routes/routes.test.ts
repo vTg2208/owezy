@@ -97,6 +97,24 @@ describe('API routes', () => {
         async sendMessage() { return { messageId: 'message-1', success: true as const }; },
         async listMessages() { return { messages: [], nextCursor: undefined }; },
       },
+      receiptService: {
+        async uploadReceipt() {
+          return {
+            receiptId: 'receipt-1', receiptUrl: '/api/trips/trip-1/receipts/receipt-1',
+            contentType: 'image/png' as const, byteSize: 8,
+            checksumSha256: '4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6',
+            status: 'pending' as const, pendingExpiresAt: new Date('2026-09-01T00:00:00.000Z'),
+          };
+        },
+        async readReceipt() {
+          return {
+            bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            contentType: 'image/png' as const, byteSize: 8,
+            checksumSha256: '4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6',
+          };
+        },
+      },
+      receiptMaxBytes: 8,
       ...overrides,
     };
   }
@@ -126,12 +144,84 @@ describe('API routes', () => {
     expect(await response.json()).toEqual({ error: 'You are not a member of this trip' });
   });
 
-  it('returns an explicit validation error for receipt metadata before Task 3', async () => {
+  it('uploads exact raw image bytes and returns pending receipt metadata', async () => {
+    let upload: { firebaseUid: string; tripId: string; contentType: string | undefined; bytes: Buffer } | undefined;
+    const base = dependencies();
+    const router = createApiRouter(dependencies({
+      receiptService: {
+        ...base.receiptService,
+        async uploadReceipt(
+          firebaseUid: string,
+          tripId: string,
+          contentType: string | undefined,
+          bytes: Buffer,
+        ) {
+          upload = { firebaseUid, tripId, contentType, bytes };
+          return base.receiptService.uploadReceipt();
+        },
+      },
+    }));
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    const response = await request(router, '/trips/trip-1/receipts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+      body: png,
+    });
+
+    expect(response.status).toBe(201);
+    expect(upload).toEqual({
+      firebaseUid: 'firebase-1', tripId: 'trip-1', contentType: 'image/png', bytes: png,
+    });
+    expect(await response.json()).toEqual({
+      receipt_id: 'receipt-1',
+      receipt_url: '/api/trips/trip-1/receipts/receipt-1',
+      content_type: 'image/png',
+      byte_size: 8,
+      checksum_sha256: '4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6',
+      status: 'pending',
+      pending_expires_at: '2026-09-01T00:00:00.000Z',
+    });
+  });
+
+  it('streams receipt bytes with private authenticated response headers', async () => {
+    const router = createApiRouter(dependencies());
+
+    const response = await request(router, '/trips/trip-1/receipts/receipt-1');
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(response.headers.get('content-length')).toBe('8');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+  });
+
+  it('maps route-scoped raw parser size failures to 413', async () => {
+    const router = createApiRouter(dependencies());
+
+    const response = await request(router, '/trips/trip-1/receipts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+      body: Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.of(0),
+      ]),
+    });
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: 'Receipt image exceeds the 8 byte limit' });
+  });
+
+  it('returns the receipt input validation error from expense creation', async () => {
     const base = dependencies();
     const router = createApiRouter(dependencies({
       expenseService: {
         ...base.expenseService,
-        async createExpense() { throw new ServiceError(400, 'Receipt uploads are not supported yet'); },
+        async createExpense() {
+          throw new ServiceError(400, 'receiptUrl is not accepted; upload the receipt first and send receiptId');
+        },
       },
     }));
 
@@ -139,12 +229,14 @@ describe('API routes', () => {
       method: 'POST',
       body: JSON.stringify({
         description: 'Meal', amount: 10, splitType: 'equal',
-        splits: [{ participantId: 'member-1', amount: 10 }], receiptId: 'receipt-1',
+        splits: [{ participantId: 'member-1', amount: 10 }], receiptUrl: 'data:image/png;base64,bytes',
       }),
     });
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: 'Receipt uploads are not supported yet' });
+    expect(await response.json()).toEqual({
+      error: 'receiptUrl is not accepted; upload the receipt first and send receiptId',
+    });
   });
 
   it('fails explicitly when an expense amount cannot fit the legacy numeric HTTP contract', async () => {

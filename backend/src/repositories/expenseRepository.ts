@@ -53,9 +53,6 @@ export class PostgresExpenseRepository implements ExpenseRepository {
   }
 
   async createExpense(expense: NewExpense): Promise<void> {
-    if (expense.receiptId) {
-      throw new ServiceError(400, 'Receipt uploads are not supported yet');
-    }
     return this.transaction(async (database) => {
       const membershipIds = [...new Set([
         expense.paidByMembershipId,
@@ -71,6 +68,22 @@ export class PostgresExpenseRepository implements ExpenseRepository {
       );
       if (activeMemberships.rows.length !== membershipIds.length) {
         throw new ServiceError(400, 'Every payer and split member must still be active');
+      }
+
+      if (expense.receiptId) {
+        const receipt = await database.query(
+          `SELECT id FROM receipts
+            WHERE id = $1
+              AND trip_id = $2
+              AND uploaded_by_membership_id = $3
+              AND status = 'pending'
+              AND pending_expires_at > now()
+            FOR UPDATE`,
+          [expense.receiptId, expense.tripId, expense.paidByMembershipId],
+        );
+        if (receipt.rows.length !== 1) {
+          throw new ServiceError(400, 'Receipt is not attachable by this member for this trip');
+        }
       }
 
       await database.query(
@@ -102,6 +115,18 @@ export class PostgresExpenseRepository implements ExpenseRepository {
          VALUES ${placeholders.join(', ')}`,
         values,
       );
+
+      if (expense.receiptId) {
+        await database.query(
+          `UPDATE receipts
+              SET expense_id = $2,
+                  status = 'attached',
+                  pending_expires_at = NULL,
+                  attached_at = now()
+            WHERE id = $1 AND status = 'pending'`,
+          [expense.receiptId, expense.id],
+        );
+      }
     });
   }
 

@@ -75,7 +75,7 @@ describe('PostgresTripRepository', () => {
       .resolves.toEqual({ kind: 'name-conflict' });
   });
 
-  it('does not expose a receipt metadata ID as a legacy receipt URL', async () => {
+  it('returns an authenticated application receipt URL instead of a storage key', async () => {
     let receiptMetadataQueried = false;
     const database = {
       async query(text: string) {
@@ -88,7 +88,7 @@ describe('PostgresTripRepository', () => {
         }
         if (sql.includes('FROM trip_memberships m')) return { rows: [], rowCount: 0 };
         if (sql.includes('FROM expenses e')) {
-          receiptMetadataQueried = sql.includes('FROM receipts');
+          receiptMetadataQueried = sql.includes('LEFT JOIN receipts');
           return { rows: [{
             id: 'expense-1', trip_id: 'trip-1', paid_by_membership_id: 'owner-1',
             paid_by_name: 'Owner', description: 'Meal', total_minor: '1000', split_type: 'equal',
@@ -102,7 +102,7 @@ describe('PostgresTripRepository', () => {
 
     const details = await repository.getTripDetailsForMember('firebase-1', 'trip-1');
 
-    expect(details?.expenses[0].receiptUrl).toBeUndefined();
-    expect(receiptMetadataQueried).toBe(false);
+    expect(details?.expenses[0].receiptUrl).toBe('/api/trips/trip-1/receipts/receipt-1');
+    expect(receiptMetadataQueried).toBe(true);
   });
 });
