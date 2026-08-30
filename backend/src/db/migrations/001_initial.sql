@@ -18,7 +18,7 @@ CREATE TABLE trips (
 
 CREATE TABLE trip_memberships (
   id text PRIMARY KEY,
-  trip_id text NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+  trip_id text NOT NULL REFERENCES trips(id) ON DELETE RESTRICT,
   user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   display_name text NOT NULL CHECK (btrim(display_name) <> ''),
   role text NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
@@ -85,9 +85,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF pg_trigger_depth() = 1 THEN
-    RAISE EXCEPTION 'trip memberships are historical records and cannot be deleted';
-  END IF;
+  RAISE EXCEPTION 'trip memberships are historical records and cannot be deleted';
   RETURN OLD;
 END;
 $$;

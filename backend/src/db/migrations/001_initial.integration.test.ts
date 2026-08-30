@@ -70,6 +70,14 @@ runDatabaseTests('001_initial migration', () => {
     expect(departed.rows[0].left_at).not.toBeNull();
   });
 
+  it('prevents hard deletion of a trip that has membership history', async () => {
+    await expect(client.query("DELETE FROM trips WHERE id = 't1'"))
+      .rejects.toThrow();
+
+    await expect(client.query("SELECT id FROM trip_memberships WHERE trip_id = 't1'"))
+      .resolves.toMatchObject({ rows: expect.arrayContaining([{ id: 'm1' }, { id: 'm2' }]) });
+  });
+
   it('enforces positive amounts, unique split members, and the deferred split total', async () => {
     await expect(client.query("INSERT INTO payments (id, trip_id, payer_membership_id, payee_membership_id, amount_minor) VALUES ('p1', 't1', 'm1', 'm2', 0)"))
       .rejects.toThrow();
