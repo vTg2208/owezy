@@ -68,6 +68,8 @@ npm run migrate
 npm run dev
 ```
 
+Migrations are a release step and are not applied automatically by `npm start`: run `npm run migrate` successfully against the target `DATABASE_URL` before every backend start. The migration runner applies the SQL files in ascending filename order and records each completed filename in `schema_migrations`.
+
 Start the frontend separately:
 
 ```bash
