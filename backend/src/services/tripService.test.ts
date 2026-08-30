@@ -1,0 +1,196 @@
+import { describe, expect, it } from 'vitest';
+import {
+  JoinResult,
+  Membership,
+  TripDetails,
+  TripRecord,
+  TripRepository,
+  TripService,
+} from './tripService';
+
+class MemoryTripRepository implements TripRepository {
+  readonly trips = new Map<string, TripRecord>();
+  readonly memberships = new Map<string, Membership>();
+
+  async createTripForUser(
+    firebaseUid: string,
+    trip: TripRecord,
+    owner: Membership,
+  ): Promise<{ trip: TripRecord; owner: Membership }> {
+    if (!firebaseUid) throw new Error('user missing');
+    this.trips.set(trip.id, trip);
+    this.memberships.set(owner.id, owner);
+    return { trip, owner };
+  }
+
+  async joinTripForUser(
+    firebaseUid: string,
+    roomCode: string,
+    displayName: string,
+    membershipId: string,
+  ): Promise<JoinResult> {
+    const trip = [...this.trips.values()].find((candidate) => candidate.roomCode === roomCode);
+    if (!trip) return { kind: 'not-found' };
+    if (trip.isLocked) return { kind: 'locked' };
+    const existing = [...this.memberships.values()].find(
+      (membership) => membership.tripId === trip.id
+        && membership.firebaseUid === firebaseUid
+        && membership.status === 'active',
+    );
+    if (existing) return { kind: 'existing', trip, membership: existing };
+    const duplicateName = [...this.memberships.values()].some(
+      (membership) => membership.tripId === trip.id
+        && membership.status === 'active'
+        && membership.name.toLowerCase() === displayName.toLowerCase(),
+    );
+    if (duplicateName) return { kind: 'name-conflict' };
+    const membership: Membership = {
+      id: membershipId,
+      tripId: trip.id,
+      firebaseUid,
+      name: displayName,
+      role: 'member',
+      status: 'active',
+      createdAt: new Date('2026-08-31T00:00:00.000Z'),
+    };
+    this.memberships.set(membership.id, membership);
+    return { kind: 'joined', trip, membership };
+  }
+
+  async findActiveMembership(firebaseUid: string, tripId: string): Promise<Membership | null> {
+    return [...this.memberships.values()].find(
+      (membership) => membership.firebaseUid === firebaseUid
+        && membership.tripId === tripId
+        && membership.status === 'active',
+    ) ?? null;
+  }
+
+  async getTripDetailsForMember(firebaseUid: string, tripId: string): Promise<TripDetails | null> {
+    const membership = await this.findActiveMembership(firebaseUid, tripId);
+    const trip = this.trips.get(tripId);
+    if (!membership || !trip) return null;
+    return {
+      trip,
+      participants: [...this.memberships.values()].filter(
+        (candidate) => candidate.tripId === tripId && candidate.status === 'active',
+      ),
+      expenses: [],
+    };
+  }
+
+  async setTripLocked(tripId: string, locked: boolean): Promise<void> {
+    const trip = this.trips.get(tripId);
+    if (trip) trip.isLocked = locked;
+  }
+
+  async findMembership(tripId: string, membershipId: string): Promise<Membership | null> {
+    const membership = this.memberships.get(membershipId);
+    return membership?.tripId === tripId ? membership : null;
+  }
+
+  async leaveMembership(membershipId: string): Promise<void> {
+    const membership = this.memberships.get(membershipId);
+    if (membership) membership.status = 'left';
+  }
+}
+
+function seedRepository(): MemoryTripRepository {
+  const repository = new MemoryTripRepository();
+  repository.trips.set('trip-1', {
+    id: 'trip-1',
+    name: 'Goa',
+    roomCode: 'ABC123',
+    ownerMembershipId: 'owner-1',
+    isLocked: false,
+    createdAt: new Date('2026-08-31T00:00:00.000Z'),
+  });
+  repository.memberships.set('owner-1', {
+    id: 'owner-1', tripId: 'trip-1', firebaseUid: 'owner-user', name: 'Owner', role: 'owner', status: 'active', createdAt: new Date(),
+  });
+  repository.memberships.set('member-1', {
+    id: 'member-1', tripId: 'trip-1', firebaseUid: 'member-user', name: 'Member', role: 'member', status: 'active', createdAt: new Date(),
+  });
+  return repository;
+}
+
+function sequenceIds(...ids: string[]): () => string {
+  return () => {
+    const id = ids.shift();
+    if (!id) throw new Error('No test ID left');
+    return id;
+  };
+}
+
+describe('TripService', () => {
+  it('creates a trip and its owner membership as one repository operation', async () => {
+    const repository = new MemoryTripRepository();
+    const service = new TripService(repository, sequenceIds('trip-new', 'owner-new'), () => 'ROOM42');
+
+    const result = await service.createTrip('firebase-1', ' Kerala ', ' Alice ');
+
+    expect(result).toEqual({
+      tripId: 'trip-new',
+      roomCode: 'ROOM42',
+      member: { id: 'owner-new', name: 'Alice', isAdmin: true },
+    });
+    expect(repository.trips.get('trip-new')?.ownerMembershipId).toBe('owner-new');
+    expect(repository.memberships.get('owner-new')).toMatchObject({ role: 'owner', status: 'active' });
+  });
+
+  it('returns the existing active membership when join is retried', async () => {
+    const repository = seedRepository();
+    const service = new TripService(repository, sequenceIds('unused'), () => 'unused');
+
+    const result = await service.joinTrip('member-user', 'abc123', 'Different ignored name');
+
+    expect(result).toEqual({
+      tripId: 'trip-1',
+      tripName: 'Goa',
+      member: { id: 'member-1', name: 'Member', isAdmin: false },
+      created: false,
+    });
+  });
+
+  it('rejects joins to locked trips and case-insensitive duplicate active names', async () => {
+    const lockedRepository = seedRepository();
+    lockedRepository.trips.get('trip-1')!.isLocked = true;
+    const lockedService = new TripService(lockedRepository, sequenceIds('new-1'), () => 'unused');
+    await expect(lockedService.joinTrip('new-user', 'ABC123', 'New')).rejects.toMatchObject({ status: 403 });
+
+    const duplicateRepository = seedRepository();
+    const duplicateService = new TripService(duplicateRepository, sequenceIds('new-2'), () => 'unused');
+    await expect(duplicateService.joinTrip('new-user', 'ABC123', 'member')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('requires an active membership for trip reads', async () => {
+    const service = new TripService(seedRepository(), sequenceIds('unused'), () => 'unused');
+
+    await expect(service.getTrip('outsider', 'trip-1')).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('allows only the owner to lock or unlock a trip', async () => {
+    const repository = seedRepository();
+    const service = new TripService(repository, sequenceIds('unused'), () => 'unused');
+
+    await expect(service.setLocked('member-user', 'trip-1', true)).rejects.toMatchObject({ status: 403 });
+    await service.setLocked('owner-user', 'trip-1', true);
+    expect(repository.trips.get('trip-1')?.isLocked).toBe(true);
+  });
+
+  it('lets a member leave and lets only the owner remove someone else without deleting history', async () => {
+    const selfRepository = seedRepository();
+    const selfService = new TripService(selfRepository, sequenceIds('unused'), () => 'unused');
+    await selfService.removeMember('member-user', 'trip-1', 'member-1');
+    expect(selfRepository.memberships.get('member-1')?.status).toBe('left');
+
+    const forbiddenRepository = seedRepository();
+    const forbiddenService = new TripService(forbiddenRepository, sequenceIds('unused'), () => 'unused');
+    await expect(forbiddenService.removeMember('member-user', 'trip-1', 'owner-1')).rejects.toMatchObject({ status: 403 });
+
+    const ownerRepository = seedRepository();
+    const ownerService = new TripService(ownerRepository, sequenceIds('unused'), () => 'unused');
+    await ownerService.removeMember('owner-user', 'trip-1', 'member-1');
+    expect(ownerRepository.memberships.has('member-1')).toBe(true);
+    expect(ownerRepository.memberships.get('member-1')?.status).toBe('left');
+  });
+});
