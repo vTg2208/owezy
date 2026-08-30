@@ -4,10 +4,10 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
-import { initializeDatabase, shutdownDatabase } from './database';
+import { getPool, initializeDatabase, shutdownDatabase } from './database';
 
 const PORT = process.env.PORT || 3000;
-let databaseReady = false;
+const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 1_000;
 
 export interface CloseableServer {
   close(callback: (error?: Error) => void): unknown;
@@ -16,6 +16,7 @@ export interface CloseableServer {
 export interface ServerLifecycleDependencies {
   initializeDatabase?: () => Promise<void>;
   listen?: () => Promise<CloseableServer>;
+  closeDatabase?: () => Promise<void>;
 }
 
 export interface ShutdownSignalEmitter {
@@ -23,8 +24,63 @@ export interface ShutdownSignalEmitter {
   off(signal: 'SIGTERM' | 'SIGINT', listener: () => void): unknown;
 }
 
-export function createApp(isDatabaseReady: () => boolean = () => databaseReady) {
+export interface HealthDatabase {
+  query(text: string): Promise<unknown>;
+}
+
+export interface AppDependencies {
+  database?: HealthDatabase;
+  healthCheckTimeoutMs?: number;
+}
+
+export interface LifecycleLogger {
+  error(...values: unknown[]): void;
+}
+
+class LifecycleFailure extends Error {
+  readonly errors: readonly unknown[];
+
+  constructor(message: string, errors: readonly unknown[]) {
+    super(message);
+    this.name = 'LifecycleFailure';
+    this.errors = errors;
+  }
+}
+
+function runtimeHealthDatabase(): HealthDatabase {
+  return { query: (text) => getPool().query(text) };
+}
+
+async function checkPostgresReadiness(
+  database: HealthDatabase,
+  timeoutMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      complete();
+    };
+    const timeout = setTimeout(() => {
+      finish(() => reject(new Error('PostgreSQL health check timed out')));
+    }, timeoutMs);
+    timeout.unref();
+
+    Promise.resolve()
+      .then(() => database.query('SELECT 1'))
+      .then(
+        () => finish(resolve),
+        (error: unknown) => finish(() => reject(error)),
+      );
+  });
+}
+
+export function createApp(dependencies: AppDependencies = {}) {
   const app = express();
+  const database = dependencies.database ?? runtimeHealthDatabase();
+  const healthCheckTimeoutMs = dependencies.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
 
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
@@ -40,8 +96,10 @@ export function createApp(isDatabaseReady: () => boolean = () => databaseReady) 
   app.use('/api/auth', authRoutes);
   app.use('/api', apiRoutes);
 
-  app.get('/health', (req, res) => {
-    if (!isDatabaseReady()) {
+  app.get('/health', async (req, res) => {
+    try {
+      await checkPostgresReadiness(database, healthCheckTimeoutMs);
+    } catch {
       res.status(503).json({ status: 'unavailable', timestamp: new Date().toISOString() });
       return;
     }
@@ -78,8 +136,17 @@ export async function startServer(
   dependencies: ServerLifecycleDependencies = {},
 ): Promise<CloseableServer> {
   await (dependencies.initializeDatabase ?? initializeDatabase)();
-  databaseReady = true;
-  return (dependencies.listen ?? listen)();
+  try {
+    return await (dependencies.listen ?? listen)();
+  } catch (error) {
+    const failures: unknown[] = [error];
+    try {
+      await (dependencies.closeDatabase ?? shutdownDatabase)();
+    } catch (closeError) {
+      failures.push(closeError);
+    }
+    throwFailures('Server startup failed', failures);
+  }
 }
 
 function closeHttpServer(server: CloseableServer): Promise<void> {
@@ -94,6 +161,11 @@ function closeHttpServer(server: CloseableServer): Promise<void> {
   });
 }
 
+function throwFailures(message: string, failures: unknown[]): never {
+  if (failures.length === 1) throw failures[0];
+  throw new LifecycleFailure(message, failures);
+}
+
 export function createGracefulShutdown(
   server: CloseableServer,
   closeDatabase: () => Promise<void> = shutdownDatabase,
@@ -101,11 +173,20 @@ export function createGracefulShutdown(
   let shutdown: Promise<void> | undefined;
 
   return () => {
-    shutdown ??= closeHttpServer(server)
-      .then(async () => {
-        databaseReady = false;
+    shutdown ??= (async () => {
+      const failures: unknown[] = [];
+      try {
+        await closeHttpServer(server);
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
         await closeDatabase();
-      });
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length > 0) throwFailures('Graceful shutdown failed', failures);
+    })();
     return shutdown;
   };
 }
@@ -114,9 +195,14 @@ export function registerShutdownHandlers(
   server: CloseableServer,
   closeDatabase: () => Promise<void> = shutdownDatabase,
   signalEmitter: ShutdownSignalEmitter = process,
+  logger: LifecycleLogger = console,
 ): () => void {
   const shutdown = createGracefulShutdown(server, closeDatabase);
-  const onSignal = () => { void shutdown(); };
+  const onSignal = () => {
+    void shutdown().catch((error: unknown) => {
+      logger.error('[SERVER] Graceful shutdown failed:', error);
+    });
+  };
 
   signalEmitter.once('SIGTERM', onSignal);
   signalEmitter.once('SIGINT', onSignal);
@@ -133,7 +219,7 @@ if (require.main === module) {
       registerShutdownHandlers(server);
     })
     .catch((error: unknown) => {
-      console.error('[DATABASE] Failed to initialize PostgreSQL:', error);
+      console.error('[SERVER] Failed to start:', error);
       process.exitCode = 1;
     });
 }

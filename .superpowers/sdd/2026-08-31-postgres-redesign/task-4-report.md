@@ -72,3 +72,43 @@ The tests exercise the observable contracts: rejected database initialization do
 - PostgreSQL migration integration tests are skipped without `TEST_DATABASE_URL`; no test database was provisioned for this task.
 - `npm uninstall` reported `22` dependency audit findings (`1 low`, `12 moderate`, `6 high`, `3 critical`). Per scope, no audit fixes were applied.
 - The frontend build reports that `caniuse-lite`/Browserslist data is eight months old. This warning is unrelated to the PostgreSQL runtime cleanup and was not changed.
+
+## Lifecycle review remediation
+
+The lifecycle review identified three failures in the initial implementation. They are corrected in `backend/src/server.ts` and covered by additions to `backend/src/server.test.ts`.
+
+### Additional TDD evidence
+
+1. **Current, bounded PostgreSQL health check; no error leakage**
+   - RED command: `cd backend && npm test -- server.test.ts`.
+   - RED result: exit `1`; the injected query-transition test received `500` instead of `200` because the prior app treated the dependency object as the old static readiness function (`[ERROR] isDatabaseReady is not a function`). The stalled-query test also received `500` instead of its required `503`.
+   - GREEN implementation: `/health` now executes `SELECT 1` through its injected/default PostgreSQL query boundary on every request, races it against a 1000 ms bounded timeout, responds `{ "status": "unavailable" }` with `503` for any query/timeout failure, and never serializes the database error.
+   - GREEN command: `cd backend && npm test -- server.test.ts`.
+   - GREEN result: exit `0`; `17 passed | 4 skipped` test files and `131 passed | 12 skipped` tests.
+2. **Listen failure cleanup and startup categorization**
+   - RED command: `cd backend && npm test -- server.test.ts`.
+   - RED result: exit `1`; listener-failure regression observed `closeDatabaseCalls` as `0` instead of `1` after `EADDRINUSE`.
+   - GREEN implementation: `startServer` closes the PostgreSQL pool once before rethrowing a listen error. It also preserves a simultaneous pool-close error. The process entry point now logs `[SERVER] Failed to start:` rather than incorrectly calling every failure a database-initialization failure.
+   - GREEN coverage uses an actual port conflict and asserts the failed `Server` has `listening === false` plus exactly one pool close.
+3. **Shutdown failure safety**
+   - RED command: `cd backend && npm test -- server.test.ts`.
+   - RED result: exit `1`; when HTTP close failed, `databaseCloseCalls` stayed `0`; the signal test logged nothing and Vitest recorded the unhandled rejection `Error: HTTP close failed`.
+   - GREEN implementation: graceful shutdown attempts HTTP close and PostgreSQL close independently, always attempts the pool close, and aggregates both failures in a `LifecycleFailure` with an `errors` array. Signal handlers catch that rejected lifecycle promise and log `[SERVER] Graceful shutdown failed:`.
+4. **ES2020 failure aggregation compatibility**
+   - RED command: `cd backend && npm test -- server.test.ts` after specifying the local failure contract.
+   - RED result: exit `1`; 2 assertions observed the temporary `AggregateError` rather than `LifecycleFailure`.
+   - GREEN implementation: replaced `AggregateError` (not available under this ES2020 TypeScript library target) with the local `LifecycleFailure`, preserving ordered HTTP and PostgreSQL errors.
+   - GREEN commands: `cd backend && npm test -- server.test.ts && npm run build`.
+   - GREEN result: both exited `0`; focused suite reported `131 passed | 12 skipped`, and `tsc` completed without errors.
+
+### Final remediation verification
+
+| Check | Exact result |
+| --- | --- |
+| `cd backend && npm test` | exit `0`; `17 passed | 4 skipped` test files; `131 passed | 12 skipped` tests. |
+| `cd backend && npm run build` | exit `0`; `tsc`. |
+| `cd frontend && npm test` | exit `0`; `1 passed` test file; `3 passed` tests. |
+| `cd frontend && npm run build` | exit `0`; `tsc && vite build`; `65 modules transformed`; build completed in `1.51s`. |
+| `git diff --check` | exit `0`; no output. |
+
+The health contract supersedes the earlier startup-latch wording: a live backend now reports `200` only when a current bounded PostgreSQL probe succeeds, and reports `503` without sensitive error details when it does not.
