@@ -1,5 +1,6 @@
 CREATE TABLE users (
-  id text PRIMARY KEY,
+  id uuid PRIMARY KEY,
+  firebase_uid text NOT NULL UNIQUE CHECK (btrim(firebase_uid) <> ''),
   email text NOT NULL UNIQUE,
   name text NOT NULL CHECK (btrim(name) <> ''),
   created_at timestamptz NOT NULL DEFAULT now()
@@ -18,13 +19,82 @@ CREATE TABLE trips (
 CREATE TABLE trip_memberships (
   id text PRIMARY KEY,
   trip_id text NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-  user_id text REFERENCES users(id) ON DELETE SET NULL,
+  user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   display_name text NOT NULL CHECK (btrim(display_name) <> ''),
   role text NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'left', 'anonymized')),
+  left_at timestamptz,
+  anonymized_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (trip_id, id),
-  UNIQUE (trip_id, user_id)
+  UNIQUE (trip_id, user_id),
+  CHECK ((status = 'left') = (left_at IS NOT NULL)),
+  CHECK (
+    (status = 'anonymized' AND anonymized_at IS NOT NULL AND user_id IS NULL)
+    OR (status <> 'anonymized' AND anonymized_at IS NULL)
+  )
 );
+
+CREATE OR REPLACE FUNCTION anonymize_disconnected_membership()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.user_id IS NULL AND OLD.user_id IS NOT NULL AND NEW.status <> 'anonymized' THEN
+    NEW.status := 'anonymized';
+    NEW.anonymized_at := COALESCE(NEW.anonymized_at, now());
+    NEW.display_name := 'Former member ' || OLD.id;
+    NEW.left_at := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER memberships_anonymize_disconnected_identity
+BEFORE UPDATE OF user_id ON trip_memberships
+FOR EACH ROW EXECUTE FUNCTION anonymize_disconnected_membership();
+
+CREATE OR REPLACE FUNCTION leave_trip_membership(p_membership_id text)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE trip_memberships
+     SET status = 'left', left_at = now()
+   WHERE id = p_membership_id AND status = 'active';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION anonymize_trip_membership(p_membership_id text)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE trip_memberships
+     SET user_id = NULL,
+         status = 'anonymized',
+         left_at = NULL,
+         anonymized_at = now(),
+         display_name = 'Former member ' || id
+   WHERE id = p_membership_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION prevent_trip_membership_deletion()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF pg_trigger_depth() = 1 THEN
+    RAISE EXCEPTION 'trip memberships are historical records and cannot be deleted';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER memberships_preserve_history
+BEFORE DELETE ON trip_memberships
+FOR EACH ROW EXECUTE FUNCTION prevent_trip_membership_deletion();
 
 CREATE UNIQUE INDEX trip_memberships_one_owner_per_trip
   ON trip_memberships (trip_id)
@@ -176,7 +246,14 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  PERFORM assert_expense_split_total(COALESCE(NEW.expense_id, OLD.expense_id));
+  IF TG_OP = 'DELETE' THEN
+    PERFORM assert_expense_split_total(OLD.expense_id);
+  ELSE
+    IF TG_OP = 'UPDATE' AND OLD.expense_id IS DISTINCT FROM NEW.expense_id THEN
+      PERFORM assert_expense_split_total(OLD.expense_id);
+    END IF;
+    PERFORM assert_expense_split_total(NEW.expense_id);
+  END IF;
   RETURN NULL;
 END;
 $$;

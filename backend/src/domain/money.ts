@@ -12,6 +12,10 @@ export function allocateEqual(totalMinor: number, memberIds: readonly string[]):
     throw new Error('memberIds must not be empty');
   }
 
+  if (totalMinor < memberIds.length) {
+    throw new Error('totalMinor must allow a positive amount for every member');
+  }
+
   if (new Set(memberIds).size !== memberIds.length) {
     throw new Error('memberIds must not contain duplicates');
   }

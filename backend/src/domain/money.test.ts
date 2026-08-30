@@ -24,6 +24,10 @@ describe('allocateEqual', () => {
   it('rejects duplicate members', () => {
     expect(() => allocateEqual(100, ['member-a', 'member-a'])).toThrow();
   });
+
+  it('rejects totals that cannot give every member a positive split', () => {
+    expect(() => allocateEqual(1, ['member-a', 'member-b'])).toThrow();
+  });
 });
 
 describe('majorToMinor', () => {
