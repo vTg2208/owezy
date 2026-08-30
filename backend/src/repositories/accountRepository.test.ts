@@ -8,6 +8,15 @@ interface Result {
 
 class AccountQueryBoundary {
   readonly statements: string[] = [];
+  readonly membership = {
+    id: 'owner-1',
+    userId: '11111111-1111-4111-8111-111111111111' as string | null,
+    displayName: 'Alice',
+    role: 'owner',
+    status: 'active',
+    leftAt: new Date('2026-08-30T00:00:00.000Z') as Date | null,
+    anonymizedAt: null as Date | null,
+  };
   transactionOpen = false;
   deletionUpdatedInsideTransaction = false;
 
@@ -38,6 +47,15 @@ class AccountQueryBoundary {
 
     if (normalized.startsWith('UPDATE trip_memberships')) {
       this.deletionUpdatedInsideTransaction = this.transactionOpen;
+      if (normalized.includes('user_id = NULL')) this.membership.userId = null;
+      if (normalized.includes("status = 'anonymized'")) this.membership.status = 'anonymized';
+      if (normalized.includes("display_name = 'Former member ' || id")) {
+        this.membership.displayName = `Former member ${this.membership.id}`;
+      }
+      if (normalized.includes('left_at = NULL')) this.membership.leftAt = null;
+      if (normalized.includes('anonymized_at = COALESCE(anonymized_at, now())')) {
+        this.membership.anonymizedAt = new Date('2026-08-31T00:00:00.000Z');
+      }
       return { rows: [], rowCount: 2 };
     }
 
@@ -82,5 +100,14 @@ describe('PostgresAccountRepository', () => {
 
     expect(state).toEqual({ userExists: true, firebaseDeleted: false });
     expect(database.deletionUpdatedInsideTransaction).toBe(true);
+    expect(database.membership).toEqual({
+      id: 'owner-1',
+      userId: null,
+      displayName: 'Former member owner-1',
+      role: 'owner',
+      status: 'anonymized',
+      leftAt: null,
+      anonymizedAt: new Date('2026-08-31T00:00:00.000Z'),
+    });
   });
 });

@@ -202,13 +202,9 @@ export class PostgresTripRepository implements TripRepository {
                   e.description,
                   e.total_minor,
                   e.split_type,
-                  receipt.id AS receipt_id,
                   e.created_at
              FROM expenses e
              JOIN trip_memberships payer ON payer.id = e.paid_by_membership_id
-             LEFT JOIN LATERAL (
-               SELECT r.id FROM receipts r WHERE r.expense_id = e.id ORDER BY r.created_at LIMIT 1
-             ) receipt ON true
             WHERE e.trip_id = $1
             ORDER BY e.created_at DESC, e.id DESC`,
           [tripId],
@@ -224,9 +220,8 @@ export class PostgresTripRepository implements TripRepository {
           paidBy: row.paid_by_membership_id,
           paidByName: row.paid_by_name,
           description: row.description,
-          amountMinor: Number(row.total_minor),
+          amountMinor: BigInt(row.total_minor),
           splitType: row.split_type,
-          receiptUrl: row.receipt_id ?? undefined,
           createdAt: row.created_at,
         })),
       };

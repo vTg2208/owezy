@@ -59,10 +59,10 @@ describe('ExpenseService', () => {
     });
 
     expect(result).toEqual({ expenseId: 'expense-1', splitType: 'equal', memberCount: 2 });
-    expect(repository.expenses[0]).toMatchObject({ paidByMembershipId: 'member-a', totalMinor: 10000 });
+    expect(repository.expenses[0]).toMatchObject({ paidByMembershipId: 'member-a', totalMinor: 10000n });
     expect(repository.expenses[0].splits).toEqual([
-      { membershipId: 'member-a', amountMinor: 5000 },
-      { membershipId: 'member-c', amountMinor: 5000 },
+      { membershipId: 'member-a', amountMinor: 5000n },
+      { membershipId: 'member-c', amountMinor: 5000n },
     ]);
   });
 
@@ -120,9 +120,9 @@ describe('ExpenseService', () => {
       ],
     });
     expect(repository.expenses[0].splits).toEqual([
-      { membershipId: 'member-a', amountMinor: 3333 },
-      { membershipId: 'member-b', amountMinor: 3333 },
-      { membershipId: 'member-c', amountMinor: 3334 },
+      { membershipId: 'member-a', amountMinor: 3333n },
+      { membershipId: 'member-b', amountMinor: 3333n },
+      { membershipId: 'member-c', amountMinor: 3334n },
     ]);
   });
 
@@ -137,8 +137,8 @@ describe('ExpenseService', () => {
     });
 
     expect(repository.expenses[0].splits).toEqual([
-      { membershipId: 'member-a', amountMinor: 208967022709991 },
-      { membershipId: 'member-b', amountMinor: 8798232232031000 },
+      { membershipId: 'member-a', amountMinor: 208967022709991n },
+      { membershipId: 'member-b', amountMinor: 8798232232031000n },
     ]);
   });
 
@@ -147,17 +147,35 @@ describe('ExpenseService', () => {
       description: 'Meal', amount: 10, splitType: 'equal', splits: [{ participantId: 'member-a', amount: 10 }],
     })).rejects.toMatchObject({ status: 403 });
   });
+
+  it('rejects receipt metadata until the Task 3 storage boundary exists', async () => {
+    const expenseService = service();
+    const input = {
+      description: 'Meal', amount: 10, splitType: 'equal' as const,
+      splits: [{ participantId: 'member-a', amount: 10 }],
+    };
+
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      ...input, receiptId: 'receipt-1',
+    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      ...input, receiptUrl: 'data:image/png;base64,bytes',
+    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      ...input, receiptId: { malformed: true } as unknown as string,
+    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
+  });
 });
 
 describe('calculateBalanceReport', () => {
   it('includes confirmed payments, stays zero-sum in minor units, and derives settlements', () => {
     const expense: LedgerExpense = {
       paidByMembershipId: 'member-a',
-      totalMinor: 10000,
+      totalMinor: 10000n,
       splits: [
-        { membershipId: 'member-a', amountMinor: 3334 },
-        { membershipId: 'member-b', amountMinor: 3333 },
-        { membershipId: 'member-c', amountMinor: 3333 },
+        { membershipId: 'member-a', amountMinor: 3334n },
+        { membershipId: 'member-b', amountMinor: 3333n },
+        { membershipId: 'member-c', amountMinor: 3333n },
       ],
     };
     const report = calculateBalanceReport({
@@ -168,20 +186,84 @@ describe('calculateBalanceReport', () => {
       ],
       expenses: [expense],
       payments: [
-        { payerMembershipId: 'member-b', payeeMembershipId: 'member-a', amountMinor: 1000, status: 'confirmed' },
-        { payerMembershipId: 'member-c', payeeMembershipId: 'member-a', amountMinor: 500, status: 'pending' },
+        { payerMembershipId: 'member-b', payeeMembershipId: 'member-a', amountMinor: 1000n, status: 'confirmed' },
+        { payerMembershipId: 'member-c', payeeMembershipId: 'member-a', amountMinor: 500n, status: 'pending' },
       ],
     });
 
     expect(report.balanceMinorByMember).toEqual({
-      'member-a': 5666,
-      'member-b': -2333,
-      'member-c': -3333,
+      'member-a': 5666n,
+      'member-b': -2333n,
+      'member-c': -3333n,
     });
-    expect(Object.values(report.balanceMinorByMember).reduce((sum, value) => sum + value, 0)).toBe(0);
+    expect(Object.values(report.balanceMinorByMember).reduce((sum, value) => sum + value, 0n)).toBe(0n);
     expect(report.settlementMinor).toEqual([
-      { from: 'member-c', to: 'member-a', amountMinor: 3333, fromName: 'Cara', toName: 'Alice' },
-      { from: 'member-b', to: 'member-a', amountMinor: 2333, fromName: 'Bob', toName: 'Alice' },
+      { from: 'member-c', to: 'member-a', amountMinor: 3333n, fromName: 'Cara', toName: 'Alice' },
+      { from: 'member-b', to: 'member-a', amountMinor: 2333n, fromName: 'Bob', toName: 'Alice' },
     ]);
+  });
+
+  it('keeps aggregate balances and settlements exact above Number.MAX_SAFE_INTEGER', () => {
+    const report = calculateBalanceReport({
+      memberships: [
+        { id: 'member-a', tripId: 'trip-1', firebaseUid: 'user-a', name: 'Alice', status: 'active' },
+        { id: 'member-b', tripId: 'trip-1', firebaseUid: 'user-b', name: 'Bob', status: 'active' },
+      ],
+      expenses: [
+        {
+          paidByMembershipId: 'member-a',
+          totalMinor: 9007199254740991n,
+          splits: [{ membershipId: 'member-b', amountMinor: 9007199254740991n }],
+        },
+        {
+          paidByMembershipId: 'member-a',
+          totalMinor: 9007199254740991n,
+          splits: [{ membershipId: 'member-b', amountMinor: 9007199254740991n }],
+        },
+      ],
+      payments: [
+        {
+          payerMembershipId: 'member-b', payeeMembershipId: 'member-a',
+          amountMinor: 1n, status: 'confirmed',
+        },
+      ],
+    });
+
+    expect(report.balanceMinorByMember).toEqual({
+      'member-a': 18014398509481981n,
+      'member-b': -18014398509481981n,
+    });
+    expect(report.settlementMinor).toEqual([{
+      from: 'member-b', to: 'member-a', amountMinor: 18014398509481981n,
+      fromName: 'Bob', toName: 'Alice',
+    }]);
+  });
+
+  it('fails explicitly when an exact balance cannot fit the legacy numeric HTTP contract', async () => {
+    const repository = new MemoryExpenseRepository();
+    repository.ledger = {
+      memberships: [
+        { id: 'member-a', tripId: 'trip-1', firebaseUid: 'user-a', name: 'Alice', status: 'active' },
+        { id: 'member-b', tripId: 'trip-1', firebaseUid: 'user-b', name: 'Bob', status: 'active' },
+      ],
+      expenses: [
+        {
+          paidByMembershipId: 'member-a',
+          totalMinor: 9007199254740991n,
+          splits: [{ membershipId: 'member-b', amountMinor: 9007199254740991n }],
+        },
+        {
+          paidByMembershipId: 'member-a',
+          totalMinor: 9007199254740991n,
+          splits: [{ membershipId: 'member-b', amountMinor: 9007199254740991n }],
+        },
+      ],
+      payments: [],
+    };
+
+    await expect(service(repository).getBalances('user-a', 'trip-1')).rejects.toMatchObject({
+      status: 500,
+      message: 'Balance exceeds the legacy numeric HTTP range',
+    });
   });
 });

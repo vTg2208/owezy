@@ -9,7 +9,12 @@ import {
 
 class MemoryAccountRepository implements AccountRepository {
   readonly users = new Map<string, AccountUser & { status: 'active' | 'deleting' | 'deleted' }>();
-  readonly memberships = new Map<string, { firebaseUid: string; status: 'active' | 'anonymized' }>();
+  readonly memberships = new Map<string, {
+    firebaseUid: string | null;
+    displayName: string;
+    role: 'owner' | 'member';
+    status: 'active' | 'anonymized';
+  }>();
 
   async upsertUser(firebaseUid: string, email: string, name: string): Promise<AccountUser> {
     const current = this.users.get(firebaseUid);
@@ -41,7 +46,12 @@ class MemoryAccountRepository implements AccountRepository {
     user.name = 'Deleted user';
     user.status = user.status === 'deleted' ? 'deleted' : 'deleting';
     for (const membership of this.memberships.values()) {
-      if (membership.firebaseUid === firebaseUid) membership.status = 'anonymized';
+      if (membership.firebaseUid === firebaseUid) {
+        membership.firebaseUid = null;
+        membership.displayName = `Former member ${[...this.memberships.entries()]
+          .find(([, candidate]) => candidate === membership)?.[0]}`;
+        membership.status = 'anonymized';
+      }
     }
     return { userExists: true, firebaseDeleted: user.status === 'deleted' };
   }
@@ -88,7 +98,9 @@ describe('AccountService', () => {
   it('anonymizes PostgreSQL identity and memberships before deleting Firebase', async () => {
     const repository = new MemoryAccountRepository();
     await repository.upsertUser('firebase-1', 'person@example.com', 'Person');
-    repository.memberships.set('member-1', { firebaseUid: 'firebase-1', status: 'active' });
+    repository.memberships.set('member-1', {
+      firebaseUid: 'firebase-1', displayName: 'Person', role: 'member', status: 'active',
+    });
     const firebase = new MemoryFirebaseAuth();
     const service = new AccountService(repository, {
       async deleteUser(uid) {
@@ -104,7 +116,12 @@ describe('AccountService', () => {
       name: 'Deleted user',
       status: 'deleted',
     });
-    expect(repository.memberships.get('member-1')?.status).toBe('anonymized');
+    expect(repository.memberships.get('member-1')).toEqual({
+      firebaseUid: null,
+      displayName: 'Former member member-1',
+      role: 'member',
+      status: 'anonymized',
+    });
     expect(firebase.deletedUids.has('firebase-1')).toBe(true);
   });
 

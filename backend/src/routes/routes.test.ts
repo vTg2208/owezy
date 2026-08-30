@@ -83,7 +83,7 @@ describe('API routes', () => {
           return {
             trip: { id: 'trip-1', name: 'Goa', roomCode: 'ABC123', ownerMembershipId: 'owner-1', isLocked: false, createdAt: new Date('2026-08-31T00:00:00.000Z') },
             participants: [{ id: 'member-1', tripId: 'trip-1', firebaseUid: 'firebase-1', name: 'One', role: 'member' as const, status: 'active' as const, createdAt: new Date('2026-08-31T00:00:00.000Z') }],
-            expenses: [{ id: 'expense-1', tripId: 'trip-1', paidBy: 'member-1', paidByName: 'One', description: 'Meal', amountMinor: 1234, splitType: 'equal' as const, receiptUrl: 'receipt-1', createdAt: new Date('2026-08-31T00:10:00.000Z') }],
+            expenses: [{ id: 'expense-1', tripId: 'trip-1', paidBy: 'member-1', paidByName: 'One', description: 'Meal', amountMinor: 1234n, splitType: 'equal' as const, createdAt: new Date('2026-08-31T00:10:00.000Z') }],
           };
         },
         async setLocked() { return { success: true as const }; },
@@ -110,7 +110,7 @@ describe('API routes', () => {
     expect(await response.json()).toEqual({
       trip: { id: 'trip-1', name: 'Goa', room_code: 'ABC123', admin_id: 'owner-1', is_locked: 0, created_at: '2026-08-31T00:00:00.000Z' },
       participants: [{ id: 'member-1', trip_id: 'trip-1', name: 'One', is_admin: 0, created_at: '2026-08-31T00:00:00.000Z' }],
-      expenses: [{ id: 'expense-1', trip_id: 'trip-1', paid_by: 'member-1', paid_by_name: 'One', description: 'Meal', amount: 12.34, split_type: 'equal', receipt_url: 'receipt-1', created_at: '2026-08-31T00:10:00.000Z' }],
+      expenses: [{ id: 'expense-1', trip_id: 'trip-1', paid_by: 'member-1', paid_by_name: 'One', description: 'Meal', amount: 12.34, split_type: 'equal', created_at: '2026-08-31T00:10:00.000Z' }],
     });
   });
 
@@ -124,5 +124,54 @@ describe('API routes', () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: 'You are not a member of this trip' });
+  });
+
+  it('returns an explicit validation error for receipt metadata before Task 3', async () => {
+    const base = dependencies();
+    const router = createApiRouter(dependencies({
+      expenseService: {
+        ...base.expenseService,
+        async createExpense() { throw new ServiceError(400, 'Receipt uploads are not supported yet'); },
+      },
+    }));
+
+    const response = await request(router, '/trips/trip-1/expenses', {
+      method: 'POST',
+      body: JSON.stringify({
+        description: 'Meal', amount: 10, splitType: 'equal',
+        splits: [{ participantId: 'member-1', amount: 10 }], receiptId: 'receipt-1',
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Receipt uploads are not supported yet' });
+  });
+
+  it('fails explicitly when an expense amount cannot fit the legacy numeric HTTP contract', async () => {
+    const base = dependencies();
+    const router = createApiRouter(dependencies({
+      tripService: {
+        ...base.tripService,
+        async getTrip() {
+          return {
+            trip: {
+              id: 'trip-1', name: 'Goa', roomCode: 'ABC123', ownerMembershipId: 'owner-1',
+              isLocked: false, createdAt: new Date('2026-08-31T00:00:00.000Z'),
+            },
+            participants: [],
+            expenses: [{
+              id: 'expense-large', tripId: 'trip-1', paidBy: 'owner-1', paidByName: 'Owner',
+              description: 'Large', amountMinor: 9007199254740992n, splitType: 'equal' as const,
+              createdAt: new Date('2026-08-31T00:10:00.000Z'),
+            }],
+          };
+        },
+      },
+    }));
+
+    const response = await request(router, '/trips/trip-1');
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Expense amount exceeds the legacy numeric HTTP range' });
   });
 });

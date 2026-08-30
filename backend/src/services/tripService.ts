@@ -29,7 +29,7 @@ export interface TripExpenseSummary {
   paidBy: string;
   paidByName: string;
   description: string;
-  amountMinor: number;
+  amountMinor: bigint;
   splitType: 'equal' | 'custom' | 'percentage';
   receiptUrl?: string;
   createdAt: Date;

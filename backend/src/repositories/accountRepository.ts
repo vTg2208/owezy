@@ -115,7 +115,11 @@ export class PostgresAccountRepository implements AccountRepository {
       if (user.account_status !== 'deleted') {
         await database.query(
           `UPDATE trip_memberships
-              SET user_id = NULL
+              SET user_id = NULL,
+                  display_name = 'Former member ' || id,
+                  status = 'anonymized',
+                  left_at = NULL,
+                  anonymized_at = COALESCE(anonymized_at, now())
             WHERE user_id = $1`,
           [user.id],
         );

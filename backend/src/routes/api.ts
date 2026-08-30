@@ -4,7 +4,7 @@ import { PostgresExpenseRepository } from '../repositories/expenseRepository';
 import { PostgresMessageRepository } from '../repositories/messageRepository';
 import { PostgresTripRepository } from '../repositories/tripRepository';
 import { ServiceError } from '../services/errors';
-import { ExpenseService } from '../services/expenseService';
+import { ExpenseService, minorToLegacyNumber } from '../services/expenseService';
 import { MessageService } from '../services/messageService';
 import { TripService } from '../services/tripService';
 
@@ -81,7 +81,7 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
           paid_by: expense.paidBy,
           paid_by_name: expense.paidByName,
           description: expense.description,
-          amount: expense.amountMinor / 100,
+          amount: minorToLegacyNumber(expense.amountMinor, 'Expense amount'),
           split_type: expense.splitType,
           receipt_url: expense.receiptUrl,
           created_at: expense.createdAt,

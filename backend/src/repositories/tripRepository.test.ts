@@ -74,4 +74,35 @@ describe('PostgresTripRepository', () => {
     await expect(repository.joinTripForUser('firebase-2', 'ABC123', 'owner', 'member-new'))
       .resolves.toEqual({ kind: 'name-conflict' });
   });
+
+  it('does not expose a receipt metadata ID as a legacy receipt URL', async () => {
+    let receiptMetadataQueried = false;
+    const database = {
+      async query(text: string) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        if (sql.includes('JOIN trip_memberships m ON m.trip_id = t.id')) {
+          return { rows: [{
+            id: 'trip-1', name: 'Goa', room_code: 'ABC123', owner_membership_id: 'owner-1',
+            is_locked: false, created_at: new Date('2026-08-31T00:00:00.000Z'),
+          }], rowCount: 1 };
+        }
+        if (sql.includes('FROM trip_memberships m')) return { rows: [], rowCount: 0 };
+        if (sql.includes('FROM expenses e')) {
+          receiptMetadataQueried = sql.includes('FROM receipts');
+          return { rows: [{
+            id: 'expense-1', trip_id: 'trip-1', paid_by_membership_id: 'owner-1',
+            paid_by_name: 'Owner', description: 'Meal', total_minor: '1000', split_type: 'equal',
+            receipt_id: 'receipt-1', created_at: new Date('2026-08-31T00:10:00.000Z'),
+          }], rowCount: 1 };
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+    const repository = new PostgresTripRepository(database, async (work) => work(database));
+
+    const details = await repository.getTripDetailsForMember('firebase-1', 'trip-1');
+
+    expect(details?.expenses[0].receiptUrl).toBeUndefined();
+    expect(receiptMetadataQueried).toBe(false);
+  });
 });

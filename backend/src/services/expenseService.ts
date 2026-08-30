@@ -14,7 +14,7 @@ export interface LedgerMembership {
 
 export interface ExpenseAllocation {
   membershipId: string;
-  amountMinor: number;
+  amountMinor: bigint;
 }
 
 export interface NewExpense {
@@ -22,7 +22,7 @@ export interface NewExpense {
   tripId: string;
   paidByMembershipId: string;
   description: string;
-  totalMinor: number;
+  totalMinor: bigint;
   splitType: SplitType;
   splits: ExpenseAllocation[];
   receiptId?: string;
@@ -30,14 +30,14 @@ export interface NewExpense {
 
 export interface LedgerExpense {
   paidByMembershipId: string;
-  totalMinor: number;
+  totalMinor: bigint;
   splits: ExpenseAllocation[];
 }
 
 export interface LedgerPayment {
   payerMembershipId: string;
   payeeMembershipId: string;
-  amountMinor: number;
+  amountMinor: bigint;
   status: 'pending' | 'confirmed' | 'cancelled';
 }
 
@@ -72,19 +72,19 @@ export interface ExpenseInput {
 export interface MinorSettlement {
   from: string;
   to: string;
-  amountMinor: number;
+  amountMinor: bigint;
   fromName: string;
   toName: string;
 }
 
 export interface BalanceReport {
-  balanceMinorByMember: Record<string, number>;
+  balanceMinorByMember: Record<string, bigint>;
   settlementMinor: MinorSettlement[];
 }
 
-function parseMajor(value: string | number, field: string): number {
+function parseMajor(value: string | number, field: string): bigint {
   try {
-    return majorToMinor(String(value));
+    return BigInt(majorToMinor(String(value)));
   } catch {
     throw new ServiceError(400, `${field} must be a positive amount with at most two decimal places`);
   }
@@ -103,25 +103,32 @@ function percentageToBasisPoints(value: string | number): number {
   return basisPoints;
 }
 
+function containsReceiptMetadata(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  return typeof value === 'string' ? value.trim().length > 0 : true;
+}
+
 function allocatePercentages(
-  totalMinor: number,
+  totalMinor: bigint,
   splits: Array<{ membershipId: string; basisPoints: number; index: number }>,
 ): ExpenseAllocation[] {
   const provisional = splits.map((split) => {
-    const product = BigInt(totalMinor) * BigInt(split.basisPoints);
+    const product = totalMinor * BigInt(split.basisPoints);
     return {
       membershipId: split.membershipId,
-      amountMinor: Number(product / 10000n),
-      remainder: Number(product % 10000n),
+      amountMinor: product / 10000n,
+      remainder: product % 10000n,
       index: split.index,
     };
   });
-  let remaining = totalMinor - provisional.reduce((sum, split) => sum + split.amountMinor, 0);
+  const remaining = totalMinor - provisional.reduce((sum, split) => sum + split.amountMinor, 0n);
   const remainderOrder = [...provisional].sort(
-    (left, right) => right.remainder - left.remainder || left.index - right.index,
+    (left, right) => left.remainder === right.remainder
+      ? left.index - right.index
+      : left.remainder > right.remainder ? -1 : 1,
   );
-  for (let index = 0; index < remaining; index += 1) {
-    remainderOrder[index].amountMinor += 1;
+  for (let index = 0; index < Number(remaining); index += 1) {
+    remainderOrder[index].amountMinor += 1n;
   }
   return provisional.map(({ membershipId, amountMinor }) => ({ membershipId, amountMinor }));
 }
@@ -139,6 +146,10 @@ export class ExpenseService {
   ): Promise<{ expenseId: string; splitType: SplitType; memberCount: number }> {
     const actor = await this.repository.findActiveMembership(firebaseUid, tripId);
     if (!actor) throw new ServiceError(403, 'You are not a member of this trip');
+
+    if (containsReceiptMetadata(input.receiptId) || containsReceiptMetadata(input.receiptUrl)) {
+      throw new ServiceError(400, 'Receipt uploads are not supported yet');
+    }
 
     const description = input.description?.trim();
     if (!description) throw new ServiceError(400, 'description and amount are required');
@@ -170,9 +181,9 @@ export class ExpenseService {
     let allocations: ExpenseAllocation[];
     if (splitType === 'equal') {
       try {
-        allocations = allocateEqual(totalMinor, membershipIds).map((allocation) => ({
+        allocations = allocateEqual(Number(totalMinor), membershipIds).map((allocation) => ({
           membershipId: allocation.memberId,
-          amountMinor: allocation.amountMinor,
+          amountMinor: BigInt(allocation.amountMinor),
         }));
       } catch (error) {
         throw new ServiceError(400, error instanceof Error ? error.message : 'Invalid equal split');
@@ -182,7 +193,7 @@ export class ExpenseService {
         membershipId: split.participantId,
         amountMinor: parseMajor(split.amount, 'Split amount'),
       }));
-      if (allocations.reduce((sum, split) => sum + split.amountMinor, 0) !== totalMinor) {
+      if (allocations.reduce((sum, split) => sum + split.amountMinor, 0n) !== totalMinor) {
         throw new ServiceError(400, 'Custom splits must equal the expense total');
       }
     } else {
@@ -195,7 +206,7 @@ export class ExpenseService {
         throw new ServiceError(400, 'Percentages must add up to 100');
       }
       allocations = allocatePercentages(totalMinor, percentageSplits);
-      if (allocations.some((allocation) => allocation.amountMinor <= 0)) {
+      if (allocations.some((allocation) => allocation.amountMinor <= 0n)) {
         throw new ServiceError(400, 'Every split member must receive a positive amount');
       }
     }
@@ -209,7 +220,6 @@ export class ExpenseService {
       totalMinor,
       splitType,
       splits: allocations,
-      receiptId: input.receiptId,
     });
     return { expenseId, splitType, memberCount: allocations.length };
   }
@@ -226,12 +236,12 @@ export class ExpenseService {
       balances: Object.entries(report.balanceMinorByMember).map(([memberId, amountMinor]) => ({
         memberId,
         memberName: names.get(memberId) ?? 'Unknown',
-        balance: amountMinor / 100,
+        balance: minorToLegacyNumber(amountMinor),
       })),
       settlements: report.settlementMinor.map((settlement) => ({
         from: settlement.from,
         to: settlement.to,
-        amount: settlement.amountMinor / 100,
+        amount: minorToLegacyNumber(settlement.amountMinor),
         fromName: settlement.fromName,
         toName: settlement.toName,
       })),
@@ -240,47 +250,51 @@ export class ExpenseService {
 }
 
 export function calculateBalanceReport(ledger: BalanceLedger): BalanceReport {
-  const balances = new Map(ledger.memberships.map((membership) => [membership.id, 0]));
+  const balances = new Map(ledger.memberships.map((membership) => [membership.id, 0n]));
   for (const expense of ledger.expenses) {
     balances.set(
       expense.paidByMembershipId,
-      (balances.get(expense.paidByMembershipId) ?? 0) + expense.totalMinor,
+      (balances.get(expense.paidByMembershipId) ?? 0n) + expense.totalMinor,
     );
     for (const split of expense.splits) {
-      balances.set(split.membershipId, (balances.get(split.membershipId) ?? 0) - split.amountMinor);
+      balances.set(split.membershipId, (balances.get(split.membershipId) ?? 0n) - split.amountMinor);
     }
   }
   for (const payment of ledger.payments) {
     if (payment.status !== 'confirmed') continue;
     balances.set(
       payment.payerMembershipId,
-      (balances.get(payment.payerMembershipId) ?? 0) + payment.amountMinor,
+      (balances.get(payment.payerMembershipId) ?? 0n) + payment.amountMinor,
     );
     balances.set(
       payment.payeeMembershipId,
-      (balances.get(payment.payeeMembershipId) ?? 0) - payment.amountMinor,
+      (balances.get(payment.payeeMembershipId) ?? 0n) - payment.amountMinor,
     );
   }
 
-  const total = [...balances.values()].reduce((sum, value) => sum + value, 0);
-  if (total !== 0) throw new Error(`Trip ledger is not zero-sum (${total} minor units)`);
+  const total = [...balances.values()].reduce((sum, value) => sum + value, 0n);
+  if (total !== 0n) throw new Error(`Trip ledger is not zero-sum (${total} minor units)`);
 
   const names = new Map(ledger.memberships.map((membership) => [membership.id, membership.name]));
   const creditors = [...balances.entries()]
-    .filter(([, balance]) => balance > 0)
+    .filter(([, balance]) => balance > 0n)
     .map(([id, balance]) => ({ id, balance }))
-    .sort((left, right) => right.balance - left.balance || left.id.localeCompare(right.id));
+    .sort((left, right) => left.balance === right.balance
+      ? left.id.localeCompare(right.id)
+      : left.balance > right.balance ? -1 : 1);
   const debtors = [...balances.entries()]
-    .filter(([, balance]) => balance < 0)
+    .filter(([, balance]) => balance < 0n)
     .map(([id, balance]) => ({ id, balance }))
-    .sort((left, right) => left.balance - right.balance || left.id.localeCompare(right.id));
+    .sort((left, right) => left.balance === right.balance
+      ? left.id.localeCompare(right.id)
+      : left.balance < right.balance ? -1 : 1);
   const settlements: MinorSettlement[] = [];
   let creditorIndex = 0;
   let debtorIndex = 0;
   while (creditorIndex < creditors.length && debtorIndex < debtors.length) {
     const creditor = creditors[creditorIndex];
     const debtor = debtors[debtorIndex];
-    const amountMinor = Math.min(creditor.balance, -debtor.balance);
+    const amountMinor = creditor.balance < -debtor.balance ? creditor.balance : -debtor.balance;
     settlements.push({
       from: debtor.id,
       to: creditor.id,
@@ -290,12 +304,21 @@ export function calculateBalanceReport(ledger: BalanceLedger): BalanceReport {
     });
     creditor.balance -= amountMinor;
     debtor.balance += amountMinor;
-    if (creditor.balance === 0) creditorIndex += 1;
-    if (debtor.balance === 0) debtorIndex += 1;
+    if (creditor.balance === 0n) creditorIndex += 1;
+    if (debtor.balance === 0n) debtorIndex += 1;
   }
 
   return {
     balanceMinorByMember: Object.fromEntries(balances),
     settlementMinor: settlements,
   };
+}
+
+const MAX_SAFE_MINOR = BigInt(Number.MAX_SAFE_INTEGER);
+
+export function minorToLegacyNumber(amountMinor: bigint, label = 'Balance'): number {
+  if (amountMinor > MAX_SAFE_MINOR || amountMinor < -MAX_SAFE_MINOR) {
+    throw new ServiceError(500, `${label} exceeds the legacy numeric HTTP range`);
+  }
+  return Number(amountMinor) / 100;
 }

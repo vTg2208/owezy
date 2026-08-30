@@ -52,7 +52,10 @@ export class PostgresExpenseRepository implements ExpenseRepository {
     return result.rows.map(mapMembership);
   }
 
-  createExpense(expense: NewExpense): Promise<void> {
+  async createExpense(expense: NewExpense): Promise<void> {
+    if (expense.receiptId) {
+      throw new ServiceError(400, 'Receipt uploads are not supported yet');
+    }
     return this.transaction(async (database) => {
       const membershipIds = [...new Set([
         expense.paidByMembershipId,
@@ -150,14 +153,14 @@ export class PostgresExpenseRepository implements ExpenseRepository {
         if (!expense) {
           expense = {
             paidByMembershipId: row.paid_by_membership_id,
-            totalMinor: Number(row.total_minor),
+            totalMinor: BigInt(row.total_minor),
             splits: [],
           };
           expenses.set(row.expense_id, expense);
         }
         expense.splits.push({
           membershipId: row.membership_id,
-          amountMinor: Number(row.amount_minor),
+          amountMinor: BigInt(row.amount_minor),
         });
       }
 
@@ -167,7 +170,7 @@ export class PostgresExpenseRepository implements ExpenseRepository {
         payments: paymentsResult.rows.map((row) => ({
           payerMembershipId: row.payer_membership_id,
           payeeMembershipId: row.payee_membership_id,
-          amountMinor: Number(row.amount_minor),
+          amountMinor: BigInt(row.amount_minor),
           status: 'confirmed' as const,
         })),
       };

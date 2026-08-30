@@ -7,6 +7,8 @@ class ExpenseQueryBoundary {
   splitsInsertedInTransaction = false;
   activeMembershipsLocked = false;
   confirmedPaymentsOnly = false;
+  expenseRows: Record<string, unknown>[] = [];
+  paymentRows: Record<string, unknown>[] = [];
 
   async query(text: string) {
     const sql = text.replace(/\s+/g, ' ').trim();
@@ -26,10 +28,10 @@ class ExpenseQueryBoundary {
     if (sql.includes('FROM trip_memberships m') && !sql.includes('JOIN users')) {
       return { rows: [{ id: 'member-a', trip_id: 'trip-1', display_name: 'Alice', status: 'active' }], rowCount: 1 };
     }
-    if (sql.includes('FROM expenses e')) return { rows: [], rowCount: 0 };
+    if (sql.includes('FROM expenses e')) return { rows: this.expenseRows, rowCount: this.expenseRows.length };
     if (sql.includes('FROM payments p')) {
       this.confirmedPaymentsOnly = sql.includes("p.status = 'confirmed'");
-      return { rows: [], rowCount: 0 };
+      return { rows: this.paymentRows, rowCount: this.paymentRows.length };
     }
     throw new Error(`Unexpected SQL: ${sql}`);
   }
@@ -49,9 +51,9 @@ describe('PostgresExpenseRepository', () => {
 
     await repository.createExpense({
       id: 'expense-1', tripId: 'trip-1', paidByMembershipId: 'member-a', description: 'Meal',
-      totalMinor: 1000, splitType: 'equal', splits: [
-        { membershipId: 'member-a', amountMinor: 500 },
-        { membershipId: 'member-b', amountMinor: 500 },
+      totalMinor: 1000n, splitType: 'equal', splits: [
+        { membershipId: 'member-a', amountMinor: 500n },
+        { membershipId: 'member-b', amountMinor: 500n },
       ],
     });
 
@@ -72,5 +74,49 @@ describe('PostgresExpenseRepository', () => {
       payments: [],
     });
     expect(database.confirmedPaymentsOnly).toBe(true);
+  });
+
+  it('preserves PostgreSQL bigint values without converting them to number', async () => {
+    const database = new ExpenseQueryBoundary();
+    database.expenseRows = [{
+      expense_id: 'expense-large',
+      paid_by_membership_id: 'member-a',
+      total_minor: '9007199254740993',
+      membership_id: 'member-b',
+      amount_minor: '9007199254740993',
+    }];
+    database.paymentRows = [{
+      payer_membership_id: 'member-b',
+      payee_membership_id: 'member-a',
+      amount_minor: '9007199254740995',
+    }];
+    const repository = new PostgresExpenseRepository(database, async (work) => work(database));
+
+    const ledger = await repository.getBalanceLedgerForMember('firebase-1', 'trip-1');
+
+    expect(ledger?.expenses).toEqual([{
+      paidByMembershipId: 'member-a',
+      totalMinor: 9007199254740993n,
+      splits: [{ membershipId: 'member-b', amountMinor: 9007199254740993n }],
+    }]);
+    expect(ledger?.payments).toEqual([{
+      payerMembershipId: 'member-b',
+      payeeMembershipId: 'member-a',
+      amountMinor: 9007199254740995n,
+      status: 'confirmed',
+    }]);
+  });
+
+  it('defensively rejects unsupported receipt metadata instead of discarding it', async () => {
+    const database = new ExpenseQueryBoundary();
+    const repository = new PostgresExpenseRepository(database, async (work) => work(database));
+
+    await expect(repository.createExpense({
+      id: 'expense-1', tripId: 'trip-1', paidByMembershipId: 'member-a', description: 'Meal',
+      totalMinor: 1000n, splitType: 'equal', receiptId: 'receipt-1', splits: [
+        { membershipId: 'member-a', amountMinor: 500n },
+        { membershipId: 'member-b', amountMinor: 500n },
+      ],
+    })).rejects.toMatchObject({ status: 400, message: 'Receipt uploads are not supported yet' });
   });
 });
