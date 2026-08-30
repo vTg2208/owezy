@@ -47,6 +47,32 @@ describe('applyPendingMigrations', () => {
     expect(queries).not.toContain('INSERT INTO schema_migrations (id) VALUES ($1)');
   });
 
+  it('applies a new ordered migration after an already-recorded initial migration', async () => {
+    const queries: Array<{ text: string; values?: unknown[] }> = [];
+    const migrations: Migration[] = [
+      { id: '001_initial.sql', sql: 'legacy initial migration' },
+      { id: '002_preserve_membership_history.sql', sql: 'forward repair migration' },
+    ];
+    const database = {
+      query: async (text: string, values?: unknown[]) => {
+        queries.push({ text, values });
+        if (text.startsWith('SELECT id FROM schema_migrations')) {
+          return { rows: [{ id: '001_initial.sql' }] };
+        }
+        return { rows: [] };
+      },
+    };
+
+    await applyPendingMigrations(database, migrations);
+
+    expect(queries.map(({ text }) => text)).not.toContain(migrations[0].sql);
+    expect(queries).toContainEqual({ text: migrations[1].sql, values: undefined });
+    expect(queries).toContainEqual({
+      text: 'INSERT INTO schema_migrations (id) VALUES ($1)',
+      values: ['002_preserve_membership_history.sql'],
+    });
+  });
+
   it('rolls back when a migration fails', async () => {
     const queries: string[] = [];
     const migration: Migration = { id: '001_initial.sql', sql: 'BROKEN SQL' };
