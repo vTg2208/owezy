@@ -27,14 +27,35 @@ afterEach(async () => {
 describe('LocalReceiptStorage', () => {
   it('writes and reads exact bytes under a server-generated key', async () => {
     const root = await temporaryDirectory();
-    const storage = new LocalReceiptStorage(root, () => 'server-generated');
+    const storage = new LocalReceiptStorage(root);
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-    const stored = await storage.write(bytes, 'image/png');
+    const stored = await storage.write(bytes, 'image/png', 'receipt-1');
 
-    expect(stored).toEqual({ storageKey: 'server-generated.png' });
+    expect(stored).toEqual({ storageKey: 'receipt-1.png' });
     await expect(storage.read(stored.storageKey)).resolves.toEqual(bytes);
-    await expect(readFile(join(root, 'server-generated.png'))).resolves.toEqual(bytes);
+    await expect(readFile(join(root, 'receipt-1.png'))).resolves.toEqual(bytes);
+  });
+
+  it('reuses a deterministic key and replaces corrupt bytes on restart', async () => {
+    const root = await temporaryDirectory();
+    const storage = new LocalReceiptStorage(root);
+    const expected = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    await storage.write(expected, 'image/png', 'receipt-restart');
+    await writeFile(join(root, 'receipt-restart.png'), 'corrupt');
+    const restarted = await storage.write(expected, 'image/png', 'receipt-restart');
+
+    expect(restarted.storageKey).toBe('receipt-restart.png');
+    await expect(storage.read(restarted.storageKey)).resolves.toEqual(expected);
+  });
+
+  it('rejects an unsafe internal object ID before creating a key', async () => {
+    const root = await temporaryDirectory();
+    const storage = new LocalReceiptStorage(root);
+
+    await expect(storage.write(Buffer.from('bytes'), 'image/png', '../outside'))
+      .rejects.toThrow('Invalid receipt object ID');
   });
 
   it('rejects traversal and absolute keys before touching files outside the root', async () => {
@@ -42,7 +63,7 @@ describe('LocalReceiptStorage', () => {
     const root = join(parent, 'receipts');
     const outside = join(parent, 'outside.png');
     await writeFile(outside, 'do-not-read');
-    const storage = new LocalReceiptStorage(root, () => 'safe-key');
+    const storage = new LocalReceiptStorage(root);
 
     await expect(storage.read('../outside.png')).rejects.toThrow('Invalid receipt storage key');
     await expect(storage.read(outside)).rejects.toThrow('Invalid receipt storage key');
@@ -52,8 +73,8 @@ describe('LocalReceiptStorage', () => {
 
   it('removes a stored object without exposing a filesystem path', async () => {
     const root = await temporaryDirectory();
-    const storage = new LocalReceiptStorage(root, () => 'remove-me');
-    const { storageKey } = await storage.write(Buffer.from('jpeg'), 'image/jpeg');
+    const storage = new LocalReceiptStorage(root);
+    const { storageKey } = await storage.write(Buffer.from('jpeg'), 'image/jpeg', 'remove-me');
 
     await storage.remove(storageKey);
 
@@ -65,7 +86,7 @@ describe('receipt storage configuration', () => {
   it('uses a disabled storage boundary when no local root is configured', async () => {
     const storage = new DisabledReceiptStorage();
 
-    await expect(storage.write(Buffer.from('bytes'), 'image/png'))
+    await expect(storage.write(Buffer.from('bytes'), 'image/png', 'disabled'))
       .rejects.toBeInstanceOf(ReceiptStorageDisabledError);
     await expect(storage.read('anything')).rejects.toBeInstanceOf(ReceiptStorageDisabledError);
     await expect(storage.remove('anything')).rejects.toBeInstanceOf(ReceiptStorageDisabledError);

@@ -150,12 +150,12 @@ export const api = {
     return res.json();
   },
 
-  readReceipt: async (receiptUrl: string): Promise<Blob> => {
+  readReceipt: async (receiptUrl: string, signal?: AbortSignal): Promise<Blob> => {
     const normalizedBase = API_BASE.replace(/\/$/, '');
     const url = receiptUrl.startsWith('/api/')
       ? `${normalizedBase}${receiptUrl.slice('/api'.length)}`
       : receiptUrl;
-    const res = await fetch(url, { headers: await getAuthHeaders(null) });
+    const res = await fetch(url, { headers: await getAuthHeaders(null), signal });
     if (!res.ok) {
       const error = await res.json().catch(() => ({}));
       throw new Error(error.error || 'Failed to load receipt');

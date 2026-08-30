@@ -22,9 +22,11 @@ const actor: Membership = {
 class MemoryStorage implements ReceiptStorage {
   readonly objects = new Map<string, Buffer>();
 
-  async write(bytes: Buffer, _contentType: SupportedReceiptContentType) {
-    this.objects.set('generated.png', Buffer.from(bytes));
-    return { storageKey: 'generated.png' };
+  async write(bytes: Buffer, contentType: SupportedReceiptContentType, objectId?: string) {
+    const extension = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
+    const storageKey = `${objectId ?? 'generated'}.${extension}`;
+    this.objects.set(storageKey, Buffer.from(bytes));
+    return { storageKey };
   }
 
   async read(storageKey: string) {
@@ -112,7 +114,7 @@ describe('ReceiptService upload', () => {
       id: 'receipt-1',
       tripId: 'trip-1',
       uploadedByMembershipId: 'member-1',
-      storageKey: 'generated.png',
+      storageKey: 'receipt-1.png',
       contentType: 'image/png',
       byteSize: 8,
       checksumSha256: '4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6',
@@ -149,6 +151,20 @@ describe('ReceiptService upload', () => {
     await expect(receiptService.uploadReceipt('firebase-1', 'trip-1', 'image/png', pngBytes))
       .rejects.toThrow('postgres unavailable');
     expect(storage.objects.size).toBe(0);
+  });
+
+  it('surfaces storage cleanup failure after metadata persistence fails', async () => {
+    const storage = new MemoryStorage();
+    storage.remove = async () => { throw new Error('filesystem cleanup failed'); };
+    const repository = new MemoryReceiptRepository();
+    repository.failCreate = true;
+    const { receiptService } = service({ storage, repository });
+
+    await expect(receiptService.uploadReceipt('firebase-1', 'trip-1', 'image/png', pngBytes))
+      .rejects.toMatchObject({
+        message: 'Receipt metadata persistence failed and storage cleanup also failed',
+      });
+    expect(storage.objects.size).toBe(1);
   });
 
   it('removes the stored object if membership becomes inactive before metadata insert', async () => {

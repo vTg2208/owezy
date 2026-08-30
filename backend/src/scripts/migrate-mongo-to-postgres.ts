@@ -128,6 +128,7 @@ export interface MigrationPlan {
   messages: MigratedMessage[];
   mappings: LegacyMapping[];
   sourceCounts: MigrationCounts;
+  rejectedCounts: MigrationCounts;
   issues: MigrationIssue[];
 }
 
@@ -198,6 +199,7 @@ function deduplicate(
   documents: LegacyDocument[],
   entity: string,
   issues: MigrationIssue[],
+  onReject: (document: LegacyDocument) => void,
 ): Array<{ id: string; document: LegacyDocument }> {
   const seen = new Set<string>();
   const unique: Array<{ id: string; document: LegacyDocument }> = [];
@@ -207,12 +209,14 @@ function deduplicate(
       issues.push({
         code: 'invalid_legacy_id', entity, legacyId: '<missing>', message: `${entity} has no legacy ID`,
       });
+      onReject(document);
       continue;
     }
     if (seen.has(id)) {
       issues.push({
         code: 'duplicate_legacy_id', entity, legacyId: id, message: `Duplicate ${entity} legacy ID`,
       });
+      onReject(document);
       continue;
     }
     seen.add(id);
@@ -243,13 +247,38 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
   const receipts: MigratedReceipt[] = [];
   const messages: MigratedMessage[] = [];
   const mappings: LegacyMapping[] = [];
+  const rejectedCounts: MigrationCounts = {
+    users: 0,
+    trips: 0,
+    memberships: 0,
+    expenses: 0,
+    expenseSplits: 0,
+    receipts: 0,
+    messages: 0,
+  };
+  const hasReceipt = (document: LegacyDocument) => (
+    document.receipt_url !== undefined && document.receipt_url !== null && document.receipt_url !== ''
+  );
+  const rejectExpense = (document: LegacyDocument) => {
+    rejectedCounts.expenses += 1;
+    rejectedCounts.expenseSplits += Array.isArray(document.splits) ? document.splits.length : 0;
+    if (hasReceipt(document)) rejectedCounts.receipts += 1;
+  };
 
-  const uniqueUsers = deduplicate(snapshot.users, 'user', issues);
-  const uniqueTrips = deduplicate(snapshot.trips, 'trip', issues);
-  const uniqueMembers = deduplicate(snapshot.members, 'membership', issues);
-  const uniqueExpenses = deduplicate(snapshot.expenses, 'expense', issues);
-  const uniqueMessages = deduplicate(snapshot.messages, 'message', issues);
+  const uniqueUsers = deduplicate(snapshot.users, 'user', issues, () => { rejectedCounts.users += 1; });
+  const uniqueTrips = deduplicate(snapshot.trips, 'trip', issues, () => { rejectedCounts.trips += 1; });
+  const uniqueMembers = deduplicate(snapshot.members, 'membership', issues, () => {
+    rejectedCounts.memberships += 1;
+  });
+  const uniqueExpenses = deduplicate(snapshot.expenses, 'expense', issues, rejectExpense);
+  const uniqueMessages = deduplicate(snapshot.messages, 'message', issues, () => {
+    rejectedCounts.messages += 1;
+  });
   const rawMembers = new Map(uniqueMembers.map(({ id, document }) => [id, document]));
+  const normalizedEmails = new Set<string>();
+  const normalizedRoomCodes = new Set<string>();
+  const tripUserMemberships = new Set<string>();
+  const activeMemberNames = new Set<string>();
 
   for (const { id, document } of uniqueUsers) {
     const email = typeof document.email === 'string' ? document.email.trim().toLowerCase() : '';
@@ -257,8 +286,18 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
     const createdAt = validDate(document.created_at);
     if (!email || !name || !createdAt) {
       issues.push({ code: 'invalid_user', entity: 'user', legacyId: id, message: 'User fields are invalid' });
+      rejectedCounts.users += 1;
       continue;
     }
+    if (normalizedEmails.has(email)) {
+      issues.push({
+        code: 'duplicate_normalized_email', entity: 'user', legacyId: id,
+        message: `Normalized email ${email} is used by more than one source user`,
+      });
+      rejectedCounts.users += 1;
+      continue;
+    }
+    normalizedEmails.add(email);
     const postgresId = deterministicUuid('owezy-legacy-user', id);
     users.push({ id: postgresId, legacyId: id, firebaseUid: id, email, name, createdAt });
     mappings.push({ entityType: 'user', legacyId: id, postgresId });
@@ -277,12 +316,23 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
         code: 'orphan_trip_owner', entity: 'trip', legacyId: id,
         message: 'Trip owner membership is missing or belongs to another trip',
       });
+      rejectedCounts.trips += 1;
       continue;
     }
     if (!name || !roomCode || !createdAt || !updatedAt) {
       issues.push({ code: 'invalid_trip', entity: 'trip', legacyId: id, message: 'Trip fields are invalid' });
+      rejectedCounts.trips += 1;
       continue;
     }
+    if (normalizedRoomCodes.has(roomCode)) {
+      issues.push({
+        code: 'duplicate_room_code', entity: 'trip', legacyId: id,
+        message: `Normalized room code ${roomCode} is used by more than one source trip`,
+      });
+      rejectedCounts.trips += 1;
+      continue;
+    }
+    normalizedRoomCodes.add(roomCode);
     trips.push({
       id, name, roomCode, ownerMembershipId, isLocked: Boolean(document.is_locked), createdAt, updatedAt,
     });
@@ -297,6 +347,7 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
         code: 'orphan_membership_trip', entity: 'membership', legacyId: id,
         message: 'Membership trip does not exist in the migration plan',
       });
+      rejectedCounts.memberships += 1;
       continue;
     }
     const legacyUserId = legacyId(document.user_id);
@@ -306,6 +357,7 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
         code: 'orphan_membership_user', entity: 'membership', legacyId: id,
         message: 'Membership user does not exist in the migration plan',
       });
+      rejectedCounts.memberships += 1;
       continue;
     }
     const displayName = typeof document.name === 'string' ? document.name.trim() : '';
@@ -315,8 +367,29 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
         code: 'invalid_membership', entity: 'membership', legacyId: id,
         message: 'Membership fields are invalid',
       });
+      rejectedCounts.memberships += 1;
       continue;
     }
+    const tripUserKey = user ? `${tripId}\0${user.id}` : null;
+    const activeNameKey = `${tripId}\0${displayName.toLowerCase()}`;
+    if (tripUserKey && tripUserMemberships.has(tripUserKey)) {
+      issues.push({
+        code: 'duplicate_trip_user_membership', entity: 'membership', legacyId: id,
+        message: 'Source contains more than one active membership for the same trip and user',
+      });
+      rejectedCounts.memberships += 1;
+      continue;
+    }
+    if (activeMemberNames.has(activeNameKey)) {
+      issues.push({
+        code: 'duplicate_active_member_name', entity: 'membership', legacyId: id,
+        message: 'Source contains case-insensitively duplicate active member names in one trip',
+      });
+      rejectedCounts.memberships += 1;
+      continue;
+    }
+    if (tripUserKey) tripUserMemberships.add(tripUserKey);
+    activeMemberNames.add(activeNameKey);
     memberships.push({
       id,
       tripId,
@@ -334,6 +407,7 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
     const payerId = legacyId(document.paid_by);
     if (!tripId || !validTripIds.has(tripId)) {
       issues.push({ code: 'orphan_expense_trip', entity: 'expense', legacyId: id, message: 'Expense trip is missing' });
+      rejectExpense(document);
       continue;
     }
     const payer = payerId ? membershipsById.get(payerId) : undefined;
@@ -342,6 +416,7 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
         code: 'orphan_expense_payer', entity: 'expense', legacyId: id,
         message: 'Expense payer is missing or belongs to another trip',
       });
+      rejectExpense(document);
       continue;
     }
     const totalMinor = exactMinor(document.amount);
@@ -355,10 +430,12 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
       || !['equal', 'custom', 'percentage'].includes(String(splitType))
     ) {
       issues.push({ code: 'invalid_expense', entity: 'expense', legacyId: id, message: 'Expense fields are invalid' });
+      rejectExpense(document);
       continue;
     }
     if (!Array.isArray(document.splits) || document.splits.length === 0) {
       issues.push({ code: 'invalid_expense_splits', entity: 'expense', legacyId: id, message: 'Expense has no splits' });
+      rejectExpense(document);
       continue;
     }
     const splitRows: MigratedExpenseSplit[] = [];
@@ -387,13 +464,17 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
       splitMembers.add(membership.id);
       splitRows.push({ expenseId: id, tripId, membershipId: membership.id, amountMinor });
     }
-    if (splitInvalid) continue;
+    if (splitInvalid) {
+      rejectExpense(document);
+      continue;
+    }
     const splitTotal = splitRows.reduce((sum, split) => sum + split.amountMinor, 0n);
     if (splitTotal !== totalMinor) {
       issues.push({
         code: 'split_total_mismatch', entity: 'expense', legacyId: id,
         message: `Expense split total ${splitTotal} does not equal ${totalMinor}`,
       });
+      rejectExpense(document);
       continue;
     }
 
@@ -417,6 +498,7 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
           code: 'invalid_receipt_data_url', entity: 'receipt', legacyId: receiptLegacyId,
           message: 'Receipt is not a supported, valid Base64 image data URL',
         });
+        rejectedCounts.receipts += 1;
       } else {
         const receiptId = deterministicReceiptId(id);
         receipts.push({
@@ -442,6 +524,7 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
     const membership = membershipId ? membershipsById.get(membershipId) : undefined;
     if (!tripId || !validTripIds.has(tripId)) {
       issues.push({ code: 'orphan_message_trip', entity: 'message', legacyId: id, message: 'Message trip is missing' });
+      rejectedCounts.messages += 1;
       continue;
     }
     if (!membership || membership.tripId !== tripId) {
@@ -449,12 +532,14 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
         code: 'orphan_message_member', entity: 'message', legacyId: id,
         message: 'Message member is missing or belongs to another trip',
       });
+      rejectedCounts.messages += 1;
       continue;
     }
     const message = typeof document.message === 'string' ? document.message.trim() : '';
     const createdAt = validDate(document.created_at);
     if (!message || !createdAt) {
       issues.push({ code: 'invalid_message', entity: 'message', legacyId: id, message: 'Message fields are invalid' });
+      rejectedCounts.messages += 1;
       continue;
     }
     messages.push({ id, tripId, membershipId: membership.id, message, createdAt });
@@ -477,18 +562,29 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
   };
 
   return {
-    users, trips, memberships, expenses, expenseSplits, receipts, messages, mappings, sourceCounts, issues,
+    users, trips, memberships, expenses, expenseSplits, receipts, messages, mappings,
+    sourceCounts, rejectedCounts, issues,
   };
 }
 
 export interface MigrationVerification {
   valid: boolean;
   issues: MigrationIssue[];
-  counts: { source: MigrationCounts; transformed: MigrationCounts };
+  counts: { source: MigrationCounts; transformed: MigrationCounts; rejected: MigrationCounts };
 }
 
 export function verifyMigration(plan: MigrationPlan): MigrationVerification {
   const issues = [...plan.issues];
+  const transformed = transformedCounts(plan);
+  for (const key of Object.keys(plan.sourceCounts) as Array<keyof MigrationCounts>) {
+    const accountedFor = transformed[key] + plan.rejectedCounts[key];
+    if (accountedFor !== plan.sourceCounts[key]) {
+      issues.push({
+        code: 'source_reconciliation_mismatch', entity: 'migration', legacyId: key,
+        message: `Source has ${plan.sourceCounts[key]} ${key}, but ${transformed[key]} imported and ${plan.rejectedCounts[key]} rejected`,
+      });
+    }
+  }
   const tripIds = new Set(plan.trips.map(({ id }) => id));
   const membershipById = new Map(plan.memberships.map((membership) => [membership.id, membership]));
   const expenseById = new Map(plan.expenses.map((expense) => [expense.id, expense]));
@@ -575,13 +671,13 @@ export function verifyMigration(plan: MigrationPlan): MigrationVerification {
   return {
     valid: issues.length === 0,
     issues,
-    counts: { source: plan.sourceCounts, transformed: transformedCounts(plan) },
+    counts: { source: plan.sourceCounts, transformed, rejected: plan.rejectedCounts },
   };
 }
 
 export interface MigrationTarget {
   apply(plan: MigrationPlan, storage: ReceiptStorage): Promise<void>;
-  verify(plan: MigrationPlan): Promise<MigrationIssue[]>;
+  verify(plan: MigrationPlan, storage: ReceiptStorage): Promise<MigrationIssue[]>;
 }
 
 async function upsertMapping(
@@ -595,6 +691,35 @@ async function upsertMapping(
      DO UPDATE SET postgres_id = EXCLUDED.postgres_id, migrated_at = now()`,
     [mapping.entityType, mapping.legacyId, mapping.postgresId],
   );
+}
+
+export class MigrationReceiptCleanupError extends Error {
+  readonly transactionError: unknown;
+  readonly cleanupErrors: unknown[];
+
+  constructor(transactionError: unknown, cleanupErrors: unknown[]) {
+    super('Migration transaction failed and receipt storage cleanup also failed');
+    this.name = 'MigrationReceiptCleanupError';
+    this.transactionError = transactionError;
+    this.cleanupErrors = cleanupErrors;
+  }
+}
+
+function receiptMetadataMatches(row: Record<string, unknown>, receipt: MigratedReceipt): boolean {
+  return String(row.id) === receipt.id
+    && String(row.expense_id) === receipt.expenseId
+    && String(row.trip_id) === receipt.tripId
+    && String(row.uploaded_by_membership_id) === receipt.uploadedByMembershipId
+    && String(row.content_type) === receipt.contentType
+    && Number(row.byte_size) === receipt.byteSize
+    && String(row.checksum_sha256) === receipt.checksumSha256
+    && String(row.status) === 'attached';
+}
+
+function receiptBytesMatch(bytes: Buffer, receipt: MigratedReceipt): boolean {
+  return bytes.length === receipt.byteSize
+    && createHash('sha256').update(bytes).digest('hex') === receipt.checksumSha256
+    && bytes.equals(receipt.bytes);
 }
 
 export class PostgresMigrationTarget implements MigrationTarget {
@@ -703,14 +828,50 @@ export class PostgresMigrationTarget implements MigrationTarget {
           }
 
           for (const receipt of plan.receipts.filter(({ tripId }) => tripId === trip.id)) {
-            const existing = await database.query(
+            const existingMapping = await database.query(
               `SELECT postgres_id FROM legacy_id_mappings
                 WHERE entity_type = 'receipt' AND legacy_id = $1`,
               [receipt.legacyId],
             );
-            if (existing.rows[0]) continue;
+            const mappedId = existingMapping.rows[0]?.postgres_id;
+            if (mappedId !== undefined && String(mappedId) !== receipt.id) {
+              throw new Error(
+                `Receipt mapping identity mismatch for ${receipt.legacyId}: expected ${receipt.id}, found ${mappedId}`,
+              );
+            }
 
-            const { storageKey } = await storage.write(receipt.bytes, receipt.contentType);
+            const existingReceipt = await database.query(
+              `SELECT id, expense_id, trip_id, uploaded_by_membership_id, storage_key,
+                      content_type, byte_size, checksum_sha256, status
+                 FROM receipts
+                WHERE id = $1`,
+              [receipt.id],
+            );
+            const receiptRow = existingReceipt.rows[0] as Record<string, unknown> | undefined;
+            if (receiptRow && !receiptMetadataMatches(receiptRow, receipt)) {
+              throw new Error(`Receipt target metadata mismatch for ${receipt.legacyId}`);
+            }
+            if (receiptRow) {
+              try {
+                const storedBytes = await storage.read(String(receiptRow.storage_key));
+                if (receiptBytesMatch(storedBytes, receipt)) {
+                  if (mappedId === undefined) {
+                    await upsertMapping(database, {
+                      entityType: 'receipt', legacyId: receipt.legacyId, postgresId: receipt.id,
+                    });
+                  }
+                  continue;
+                }
+              } catch {
+                // A deterministic rewrite below repairs a missing or unreadable object.
+              }
+            }
+
+            const { storageKey } = await storage.write(
+              receipt.bytes,
+              receipt.contentType,
+              receipt.id,
+            );
             storedKeys.push(storageKey);
             await database.query(
               `INSERT INTO receipts
@@ -719,6 +880,8 @@ export class PostgresMigrationTarget implements MigrationTarget {
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'attached', $9, NULL, $9)
                ON CONFLICT (id)
                DO UPDATE SET expense_id = EXCLUDED.expense_id,
+                             trip_id = EXCLUDED.trip_id,
+                             uploaded_by_membership_id = EXCLUDED.uploaded_by_membership_id,
                              storage_key = EXCLUDED.storage_key,
                              content_type = EXCLUDED.content_type,
                              byte_size = EXCLUDED.byte_size,
@@ -753,27 +916,66 @@ export class PostgresMigrationTarget implements MigrationTarget {
           }
         });
       } catch (error) {
-        await Promise.all(storedKeys.map((storageKey) => storage.remove(storageKey).catch(() => undefined)));
+        const cleanupResults = await Promise.allSettled(
+          storedKeys.map((storageKey) => storage.remove(storageKey)),
+        );
+        const cleanupErrors = cleanupResults
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason);
+        if (cleanupErrors.length > 0) {
+          throw new MigrationReceiptCleanupError(error, cleanupErrors);
+        }
         throw error;
       }
     }
   }
 
-  async verify(plan: MigrationPlan): Promise<MigrationIssue[]> {
+  async verify(plan: MigrationPlan, storage: ReceiptStorage): Promise<MigrationIssue[]> {
     const issues: MigrationIssue[] = [];
     const countsResult = await this.database.query(`
       SELECT
-        (SELECT count(*) FROM legacy_id_mappings WHERE entity_type = 'user') AS users,
-        (SELECT count(*) FROM legacy_id_mappings WHERE entity_type = 'trip') AS trips,
-        (SELECT count(*) FROM legacy_id_mappings WHERE entity_type = 'membership') AS memberships,
-        (SELECT count(*) FROM legacy_id_mappings WHERE entity_type = 'expense') AS expenses,
+        (SELECT count(*)
+           FROM legacy_id_mappings user_map
+           JOIN users user_target ON user_target.id::text = user_map.postgres_id
+          WHERE user_map.entity_type = 'user' AND user_map.legacy_id = ANY($1::text[])) AS users,
+        (SELECT count(*)
+           FROM legacy_id_mappings trip_map
+           JOIN trips trip_target ON trip_target.id::text = trip_map.postgres_id
+          WHERE trip_map.entity_type = 'trip' AND trip_map.legacy_id = ANY($2::text[])) AS trips,
+        (SELECT count(*)
+           FROM legacy_id_mappings membership_map
+           JOIN trip_memberships membership_target ON membership_target.id::text = membership_map.postgres_id
+          WHERE membership_map.entity_type = 'membership'
+            AND membership_map.legacy_id = ANY($3::text[])) AS memberships,
+        (SELECT count(*)
+           FROM legacy_id_mappings expense_map
+           JOIN expenses expense_target ON expense_target.id::text = expense_map.postgres_id
+          WHERE expense_map.entity_type = 'expense'
+            AND expense_map.legacy_id = ANY($4::text[])) AS expenses,
         (SELECT count(*)
            FROM expense_splits s
-           JOIN legacy_id_mappings m
-             ON m.entity_type = 'expense' AND m.postgres_id = s.expense_id) AS expense_splits,
-        (SELECT count(*) FROM legacy_id_mappings WHERE entity_type = 'receipt') AS receipts,
-        (SELECT count(*) FROM legacy_id_mappings WHERE entity_type = 'message') AS messages
-    `);
+           JOIN legacy_id_mappings expense_map
+             ON expense_map.entity_type = 'expense'
+            AND expense_map.postgres_id = s.expense_id::text
+            AND expense_map.legacy_id = ANY($4::text[])) AS expense_splits,
+        (SELECT count(*)
+           FROM legacy_id_mappings receipt_map
+           JOIN receipts receipt_target ON receipt_target.id::text = receipt_map.postgres_id
+          WHERE receipt_map.entity_type = 'receipt'
+            AND receipt_map.legacy_id = ANY($5::text[])) AS receipts,
+        (SELECT count(*)
+           FROM legacy_id_mappings message_map
+           JOIN chat_messages message_target ON message_target.id::text = message_map.postgres_id
+          WHERE message_map.entity_type = 'message'
+            AND message_map.legacy_id = ANY($6::text[])) AS messages
+    `, [
+      plan.users.map(({ legacyId: id }) => id),
+      plan.trips.map(({ id }) => id),
+      plan.memberships.map(({ id }) => id),
+      plan.expenses.map(({ id }) => id),
+      plan.receipts.map(({ legacyId: id }) => id),
+      plan.messages.map(({ id }) => id),
+    ]);
     const expected = transformedCounts(plan);
     const actualRow = countsResult.rows[0] ?? {};
     for (const key of Object.keys(expected) as Array<keyof MigrationCounts>) {
@@ -785,6 +987,41 @@ export class PostgresMigrationTarget implements MigrationTarget {
           entity: 'migration',
           legacyId: key,
           message: `Expected ${expected[key]} ${key}, found ${actual}`,
+        });
+      }
+    }
+
+    for (const receipt of plan.receipts) {
+      const receiptResult = await this.database.query(
+        `SELECT m.postgres_id, r.id, r.expense_id, r.trip_id, r.uploaded_by_membership_id,
+                r.storage_key, r.content_type, r.byte_size, r.checksum_sha256, r.status
+           FROM legacy_id_mappings m
+           LEFT JOIN receipts r ON r.id::text = m.postgres_id
+          WHERE m.entity_type = 'receipt' AND m.legacy_id = $1`,
+        [receipt.legacyId],
+      );
+      const row = receiptResult.rows[0] as Record<string, unknown> | undefined;
+      if (!row || String(row.postgres_id) !== receipt.id) {
+        issues.push({
+          code: 'database_receipt_mapping_invalid', entity: 'receipt', legacyId: receipt.legacyId,
+          message: `Receipt mapping does not resolve to expected target ${receipt.id}`,
+        });
+        continue;
+      }
+      if (!receiptMetadataMatches(row, receipt)) {
+        issues.push({
+          code: 'database_receipt_metadata_invalid', entity: 'receipt', legacyId: receipt.legacyId,
+          message: 'Persisted receipt metadata does not match the transformed source receipt',
+        });
+        continue;
+      }
+      try {
+        const bytes = await storage.read(String(row.storage_key));
+        if (!receiptBytesMatch(bytes, receipt)) throw new Error('checksum or byte size mismatch');
+      } catch (error) {
+        issues.push({
+          code: 'database_receipt_object_invalid', entity: 'receipt', legacyId: receipt.legacyId,
+          message: `Persisted receipt object is missing or corrupt: ${error instanceof Error ? error.message : String(error)}`,
         });
       }
     }
@@ -890,7 +1127,7 @@ export async function executeMigration(
   }
 
   await options.target.apply(plan, options.storage);
-  const databaseIssues = await options.target.verify(plan);
+  const databaseIssues = await options.target.verify(plan, options.storage);
   return {
     ok: databaseIssues.length === 0,
     dryRun: false,

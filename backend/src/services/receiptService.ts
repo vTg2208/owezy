@@ -57,6 +57,18 @@ export interface ReadReceipt {
   checksumSha256: string;
 }
 
+export class ReceiptCleanupError extends Error {
+  readonly persistenceError: unknown;
+  readonly cleanupError: unknown;
+
+  constructor(persistenceError: unknown, cleanupError: unknown) {
+    super('Receipt metadata persistence failed and storage cleanup also failed');
+    this.name = 'ReceiptCleanupError';
+    this.persistenceError = persistenceError;
+    this.cleanupError = cleanupError;
+  }
+}
+
 export class ReceiptService {
   constructor(
     private readonly memberships: Pick<TripRepository, 'findActiveMembership'>,
@@ -93,7 +105,7 @@ export class ReceiptService {
 
     let storageKey: string;
     try {
-      ({ storageKey } = await this.storage.write(bytes, contentType));
+      ({ storageKey } = await this.storage.write(bytes, contentType, receiptId));
     } catch (error) {
       if (error instanceof ReceiptStorageDisabledError) {
         throw new ServiceError(503, error.message);
@@ -117,7 +129,11 @@ export class ReceiptService {
         throw new ServiceError(403, 'You are not a member of this trip');
       }
     } catch (error) {
-      await this.storage.remove(storageKey).catch(() => undefined);
+      try {
+        await this.storage.remove(storageKey);
+      } catch (cleanupError) {
+        throw new ReceiptCleanupError(error, cleanupError);
+      }
       throw error;
     }
 

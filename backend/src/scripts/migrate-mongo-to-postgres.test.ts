@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { DisabledReceiptStorage } from '../storage/receiptStorage';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { DisabledReceiptStorage, LocalReceiptStorage } from '../storage/receiptStorage';
 import {
   LegacySnapshot,
   MigrationIssue,
@@ -12,6 +15,21 @@ import {
   verifyMigration,
 } from './migrate-mongo-to-postgres';
 import { ReceiptStorage, SupportedReceiptContentType } from '../storage/receiptStorage';
+
+const temporaryDirectories: string[] = [];
+
+async function temporaryDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'owezy-migration-receipts-'));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, {
+    recursive: true,
+    force: true,
+  })));
+});
 
 function validSnapshot(): LegacySnapshot {
   return {
@@ -161,6 +179,70 @@ describe('transformLegacySnapshot', () => {
     ]));
     expect(plan.memberships.some(({ id }) => id === 'missing-date')).toBe(false);
   });
+
+  it('rejects users whose normalized email duplicates another source user', () => {
+    const snapshot = validSnapshot();
+    snapshot.users.push({
+      _id: 'firebase-u3', email: '  ONE@EXAMPLE.COM ', name: 'Three',
+      created_at: '2026-08-07T00:00:00.000Z',
+    });
+
+    const plan = transformLegacySnapshot(snapshot);
+
+    expect(plan.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'duplicate_normalized_email', legacyId: 'firebase-u3' }),
+    ]));
+    expect(plan.users.some(({ legacyId }) => legacyId === 'firebase-u3')).toBe(false);
+  });
+
+  it('rejects trips whose normalized room code duplicates another source trip', () => {
+    const snapshot = validSnapshot();
+    snapshot.trips.push({
+      _id: 'trip-2', name: 'Duplicate room', room_code: ' abc123 ', admin_id: 'member-3',
+      created_at: '2026-08-07T00:00:00.000Z', updated_at: '2026-08-07T00:00:00.000Z',
+    });
+    snapshot.members.push({
+      _id: 'member-3', trip_id: 'trip-2', name: 'Three', is_admin: true,
+      created_at: '2026-08-07T00:00:00.000Z',
+    });
+
+    const plan = transformLegacySnapshot(snapshot);
+
+    expect(plan.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'duplicate_room_code', legacyId: 'trip-2' }),
+    ]));
+    expect(plan.trips.some(({ id }) => id === 'trip-2')).toBe(false);
+  });
+
+  it('rejects a second active membership for the same trip and user', () => {
+    const snapshot = validSnapshot();
+    snapshot.members.push({
+      _id: 'member-3', trip_id: 'trip-1', name: 'Second identity', user_id: 'firebase-u2',
+      is_admin: false, created_at: '2026-08-07T00:00:00.000Z',
+    });
+
+    const plan = transformLegacySnapshot(snapshot);
+
+    expect(plan.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'duplicate_trip_user_membership', legacyId: 'member-3' }),
+    ]));
+    expect(plan.memberships.some(({ id }) => id === 'member-3')).toBe(false);
+  });
+
+  it('rejects active member display names that collide case-insensitively within a trip', () => {
+    const snapshot = validSnapshot();
+    snapshot.members.push({
+      _id: 'member-3', trip_id: 'trip-1', name: ' tWo ', is_admin: false,
+      created_at: '2026-08-07T00:00:00.000Z',
+    });
+
+    const plan = transformLegacySnapshot(snapshot);
+
+    expect(plan.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'duplicate_active_member_name', legacyId: 'member-3' }),
+    ]));
+    expect(plan.memberships.some(({ id }) => id === 'member-3')).toBe(false);
+  });
 });
 
 describe('verifyMigration', () => {
@@ -172,7 +254,21 @@ describe('verifyMigration', () => {
     expect(verification.counts).toEqual({
       source: { users: 2, trips: 1, memberships: 2, expenses: 1, expenseSplits: 2, receipts: 1, messages: 1 },
       transformed: { users: 2, trips: 1, memberships: 2, expenses: 1, expenseSplits: 2, receipts: 1, messages: 1 },
+      rejected: { users: 0, trips: 0, memberships: 0, expenses: 0, expenseSplits: 0, receipts: 0, messages: 0 },
     });
+  });
+
+  it('reports a source reconciliation mismatch when a transformed record is silently dropped', () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    plan.messages.pop();
+
+    const verification = verifyMigration(plan);
+
+    expect(verification.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'source_reconciliation_mismatch', legacyId: 'messages',
+      }),
+    ]));
   });
 
   it('detects split-total and non-zero trip ledger mutations independently', () => {
@@ -275,15 +371,22 @@ class RecordingStorage implements ReceiptStorage {
   writes = 0;
   readonly objects = new Map<string, Buffer>();
 
-  async write(bytes: Buffer, _contentType: SupportedReceiptContentType) {
+  async write(
+    bytes: Buffer,
+    contentType: SupportedReceiptContentType,
+    objectId: string,
+  ) {
     this.writes += 1;
-    const storageKey = `migration-${this.writes}.png`;
+    const extension = contentType === 'image/jpeg' ? 'jpg' : contentType.split('/')[1];
+    const storageKey = `${objectId}.${extension}`;
     this.objects.set(storageKey, Buffer.from(bytes));
     return { storageKey };
   }
 
   async read(storageKey: string) {
-    return this.objects.get(storageKey) ?? Buffer.alloc(0);
+    const bytes = this.objects.get(storageKey);
+    if (!bytes) throw Object.assign(new Error('object missing'), { code: 'ENOENT' });
+    return bytes;
   }
 
   async remove(storageKey: string) {
@@ -291,12 +394,83 @@ class RecordingStorage implements ReceiptStorage {
   }
 }
 
+interface ReceiptRowFixture {
+  id: string;
+  expense_id: string;
+  trip_id: string;
+  uploaded_by_membership_id: string;
+  storage_key: string;
+  content_type: string;
+  byte_size: number;
+  checksum_sha256: string;
+  status: string;
+}
+
+class ReceiptRestartDatabase {
+  mapping: string | null = null;
+  row: ReceiptRowFixture | null = null;
+  failAfterReceipt = false;
+  receiptInserts = 0;
+
+  async query(text: string, values?: unknown[]) {
+    const sql = text.replace(/\s+/g, ' ').trim();
+    if (sql.startsWith('INSERT INTO users')) {
+      return { rows: [{ id: values?.[0] }], rowCount: 1 };
+    }
+    if (sql.startsWith('SELECT postgres_id FROM legacy_id_mappings')) {
+      return this.mapping
+        ? { rows: [{ postgres_id: this.mapping }], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith('SELECT id, expense_id') && sql.includes('FROM receipts')) {
+      return this.row ? { rows: [this.row], rowCount: 1 } : { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith('INSERT INTO receipts')) {
+      this.receiptInserts += 1;
+      this.row = {
+        id: String(values?.[0]),
+        expense_id: String(values?.[1]),
+        trip_id: String(values?.[2]),
+        uploaded_by_membership_id: String(values?.[3]),
+        storage_key: String(values?.[4]),
+        content_type: String(values?.[5]),
+        byte_size: Number(values?.[6]),
+        checksum_sha256: String(values?.[7]),
+        status: 'attached',
+      };
+    }
+    if (sql.startsWith('INSERT INTO legacy_id_mappings') && values?.[0] === 'receipt') {
+      this.mapping = String(values[2]);
+    }
+    if (this.failAfterReceipt && sql.startsWith('INSERT INTO chat_messages')) {
+      throw new Error('transaction failed after receipt write');
+    }
+    return { rows: [], rowCount: 1 };
+  }
+}
+
+function expectedReceiptRow(storageKey: string): ReceiptRowFixture {
+  const receipt = transformLegacySnapshot(validSnapshot()).receipts[0];
+  return {
+    id: receipt.id,
+    expense_id: receipt.expenseId,
+    trip_id: receipt.tripId,
+    uploaded_by_membership_id: receipt.uploadedByMembershipId,
+    storage_key: storageKey,
+    content_type: receipt.contentType,
+    byte_size: receipt.byteSize,
+    checksum_sha256: receipt.checksumSha256,
+    status: 'attached',
+  };
+}
+
 describe('PostgresMigrationTarget', () => {
-  it('uses idempotent SQL, per-trip transactions, and skips already-mapped receipt objects on restart', async () => {
+  it('uses idempotent SQL and validates committed receipt objects without rewriting them', async () => {
     const statements: Array<{ sql: string; values?: unknown[]; inTransaction: boolean }> = [];
     let transactionOpen = false;
     let transactionCalls = 0;
     let receiptMapped = false;
+    let receiptRow: ReceiptRowFixture | null = null;
     const database = {
       async query(text: string, values?: unknown[]) {
         const sql = text.replace(/\s+/g, ' ').trim();
@@ -308,6 +482,17 @@ describe('PostgresMigrationTarget', () => {
           return receiptMapped
             ? { rows: [{ postgres_id: 'receipt-c950f3315cf046c6fe00c738' }], rowCount: 1 }
             : { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith('SELECT id, expense_id') && sql.includes('FROM receipts')) {
+          return receiptRow ? { rows: [receiptRow], rowCount: 1 } : { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith('INSERT INTO receipts')) {
+          receiptRow = {
+            id: String(values?.[0]), expense_id: String(values?.[1]), trip_id: String(values?.[2]),
+            uploaded_by_membership_id: String(values?.[3]), storage_key: String(values?.[4]),
+            content_type: String(values?.[5]), byte_size: Number(values?.[6]),
+            checksum_sha256: String(values?.[7]), status: 'attached',
+          };
         }
         if (
           sql.startsWith('INSERT INTO legacy_id_mappings')
@@ -342,17 +527,145 @@ describe('PostgresMigrationTarget', () => {
       .every(({ sql }) => sql.includes('ON CONFLICT'))).toBe(true);
   });
 
+  it('repairs a missing receipt mapping only after validating the row and real stored bytes', async () => {
+    const root = await temporaryDirectory();
+    const storage = new LocalReceiptStorage(root);
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    await storage.write(receipt.bytes, receipt.contentType, receipt.id);
+    const database = new ReceiptRestartDatabase();
+    database.row = expectedReceiptRow(`${receipt.id}.png`);
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await target.apply(plan, storage);
+
+    expect(database.mapping).toBe(receipt.id);
+    expect(database.receiptInserts).toBe(0);
+  });
+
+  it('rejects a receipt mapping directed at a different target identity', async () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    const database = new ReceiptRestartDatabase();
+    database.mapping = 'receipt-wrong-target';
+    const storage = new RecordingStorage();
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await expect(target.apply(plan, storage)).rejects.toThrow('Receipt mapping identity mismatch');
+    expect(storage.writes).toBe(0);
+  });
+
+  it('rejects mapped receipt metadata that belongs to a different expense', async () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    const database = new ReceiptRestartDatabase();
+    database.mapping = receipt.id;
+    database.row = { ...expectedReceiptRow(`${receipt.id}.png`), expense_id: 'expense-wrong' };
+    const storage = new RecordingStorage();
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await expect(target.apply(plan, storage)).rejects.toThrow('Receipt target metadata mismatch');
+    expect(storage.writes).toBe(0);
+  });
+
+  it('repairs a missing receipt row even when its mapping already exists', async () => {
+    const root = await temporaryDirectory();
+    const storage = new LocalReceiptStorage(root);
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    const database = new ReceiptRestartDatabase();
+    database.mapping = receipt.id;
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await target.apply(plan, storage);
+
+    expect(database.row).toEqual(expectedReceiptRow(`${receipt.id}.png`));
+    await expect(readFile(join(root, `${receipt.id}.png`))).resolves.toEqual(receipt.bytes);
+  });
+
+  it('repairs a missing receipt object referenced by otherwise valid metadata', async () => {
+    const root = await temporaryDirectory();
+    const storage = new LocalReceiptStorage(root);
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    const database = new ReceiptRestartDatabase();
+    database.mapping = receipt.id;
+    database.row = expectedReceiptRow(`${receipt.id}.png`);
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await target.apply(plan, storage);
+
+    await expect(readFile(join(root, `${receipt.id}.png`))).resolves.toEqual(receipt.bytes);
+  });
+
+  it('replaces corrupt receipt bytes instead of trusting valid-looking mapping metadata', async () => {
+    const root = await temporaryDirectory();
+    const storage = new LocalReceiptStorage(root);
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    await writeFile(join(root, `${receipt.id}.png`), 'corrupt');
+    const database = new ReceiptRestartDatabase();
+    database.mapping = receipt.id;
+    database.row = expectedReceiptRow(`${receipt.id}.png`);
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await target.apply(plan, storage);
+
+    await expect(readFile(join(root, `${receipt.id}.png`))).resolves.toEqual(receipt.bytes);
+  });
+
+  it('surfaces cleanup failure and reruns from a deterministic real-storage orphan', async () => {
+    const root = await temporaryDirectory();
+    const localStorage = new LocalReceiptStorage(root);
+    const failingStorage: ReceiptStorage = {
+      write: (bytes, contentType, objectId) => localStorage.write(bytes, contentType, objectId),
+      read: (storageKey) => localStorage.read(storageKey),
+      async remove() { throw new Error('cleanup unavailable'); },
+    };
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    const failedDatabase = new ReceiptRestartDatabase();
+    failedDatabase.failAfterReceipt = true;
+    const failedTarget = new PostgresMigrationTarget(
+      failedDatabase,
+      async (work) => work(failedDatabase),
+    );
+
+    await expect(failedTarget.apply(plan, failingStorage)).rejects.toThrow(
+      'Migration transaction failed and receipt storage cleanup also failed',
+    );
+    await expect(readFile(join(root, `${receipt.id}.png`))).resolves.toEqual(receipt.bytes);
+
+    const restartedDatabase = new ReceiptRestartDatabase();
+    const restartedTarget = new PostgresMigrationTarget(
+      restartedDatabase,
+      async (work) => work(restartedDatabase),
+    );
+    await restartedTarget.apply(plan, localStorage);
+
+    expect(restartedDatabase.mapping).toBe(receipt.id);
+    expect(restartedDatabase.row).toEqual(expectedReceiptRow(`${receipt.id}.png`));
+  });
+
   it('verifies database counts, references, split totals, and zero-sum balances', async () => {
     const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    let countsSql = '';
     const database = {
       async query(text: string) {
         const sql = text.replace(/\s+/g, ' ').trim();
         if (sql.includes('AS expense_splits') && sql.includes('AS users')) {
+          countsSql = sql;
           return {
             rows: [{
               users: '2', trips: '1', memberships: '2', expenses: '1',
               expense_splits: '2', receipts: '1', messages: '1',
             }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('FROM legacy_id_mappings m') && sql.includes('LEFT JOIN receipts r')) {
+          return {
+            rows: [{ postgres_id: receipt.id, ...expectedReceiptRow(`${receipt.id}.png`) }],
             rowCount: 1,
           };
         }
@@ -363,12 +676,16 @@ describe('PostgresMigrationTarget', () => {
       },
     };
     const target = new PostgresMigrationTarget(database, async (work) => work(database));
+    const storage = new RecordingStorage();
+    await storage.write(receipt.bytes, receipt.contentType, receipt.id);
 
-    await expect(target.verify(plan)).resolves.toEqual([]);
+    await expect(target.verify(plan, storage)).resolves.toEqual([]);
+    expect(countsSql).toContain("JOIN receipts receipt_target ON receipt_target.id::text = receipt_map.postgres_id");
   });
 
   it('reports a mismatched migrated database count', async () => {
     const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
     const database = {
       async query(text: string) {
         const sql = text.replace(/\s+/g, ' ').trim();
@@ -381,6 +698,12 @@ describe('PostgresMigrationTarget', () => {
             rowCount: 1,
           };
         }
+        if (sql.includes('FROM legacy_id_mappings m') && sql.includes('LEFT JOIN receipts r')) {
+          return {
+            rows: [{ postgres_id: receipt.id, ...expectedReceiptRow(`${receipt.id}.png`) }],
+            rowCount: 1,
+          };
+        }
         if (sql.includes('AS orphan_count')) return { rows: [{ orphan_count: '0' }], rowCount: 1 };
         if (sql.includes('HAVING sum(s.amount_minor)')) return { rows: [], rowCount: 0 };
         if (sql.includes('HAVING sum(delta)')) return { rows: [], rowCount: 0 };
@@ -388,9 +711,49 @@ describe('PostgresMigrationTarget', () => {
       },
     };
     const target = new PostgresMigrationTarget(database, async (work) => work(database));
+    const storage = new RecordingStorage();
+    await storage.write(receipt.bytes, receipt.contentType, receipt.id);
 
-    await expect(target.verify(plan)).resolves.toEqual(expect.arrayContaining([
+    await expect(target.verify(plan, storage)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'database_count_mismatch', legacyId: 'expenses' }),
+    ]));
+  });
+
+  it('reports corrupt persisted receipt bytes during post-write verification', async () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    const database = {
+      async query(text: string) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        if (sql.includes('AS expense_splits') && sql.includes('AS users')) {
+          return {
+            rows: [{
+              users: '2', trips: '1', memberships: '2', expenses: '1',
+              expense_splits: '2', receipts: '1', messages: '1',
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('FROM legacy_id_mappings m') && sql.includes('LEFT JOIN receipts r')) {
+          return {
+            rows: [{ postgres_id: receipt.id, ...expectedReceiptRow(`${receipt.id}.png`) }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('AS orphan_count')) return { rows: [{ orphan_count: '0' }], rowCount: 1 };
+        if (sql.includes('HAVING sum(s.amount_minor)')) return { rows: [], rowCount: 0 };
+        if (sql.includes('HAVING sum(delta)')) return { rows: [], rowCount: 0 };
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+    const storage = new RecordingStorage();
+    storage.objects.set(`${receipt.id}.png`, Buffer.from('corrupt'));
+
+    await expect(target.verify(plan, storage)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'database_receipt_object_invalid', legacyId: receipt.legacyId,
+      }),
     ]));
   });
 });

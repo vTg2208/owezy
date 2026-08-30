@@ -1,6 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 export const DEFAULT_RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_RECEIPT_PENDING_TTL_HOURS = 24;
@@ -8,7 +7,11 @@ export const DEFAULT_RECEIPT_PENDING_TTL_HOURS = 24;
 export type SupportedReceiptContentType = 'image/jpeg' | 'image/png' | 'image/webp';
 
 export interface ReceiptStorage {
-  write(bytes: Buffer, contentType: SupportedReceiptContentType): Promise<{ storageKey: string }>;
+  write(
+    bytes: Buffer,
+    contentType: SupportedReceiptContentType,
+    objectId: string,
+  ): Promise<{ storageKey: string }>;
   read(storageKey: string): Promise<Buffer>;
   remove(storageKey: string): Promise<void>;
 }
@@ -67,21 +70,22 @@ const extensionByContentType: Record<SupportedReceiptContentType, string> = {
 export class LocalReceiptStorage implements ReceiptStorage {
   private readonly root: string;
 
-  constructor(
-    root: string,
-    private readonly createObjectId: () => string = randomUUID,
-  ) {
+  constructor(root: string) {
     this.root = resolve(root);
   }
 
   async write(
     bytes: Buffer,
     contentType: SupportedReceiptContentType,
+    objectId: string,
   ): Promise<{ storageKey: string }> {
-    const storageKey = `${this.createObjectId()}${extensionByContentType[contentType]}`;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(objectId)) {
+      throw new Error('Invalid receipt object ID');
+    }
+    const storageKey = `${objectId}${extensionByContentType[contentType]}`;
     const objectPath = this.objectPath(storageKey);
     await mkdir(this.root, { recursive: true });
-    await writeFile(objectPath, bytes, { flag: 'wx' });
+    await writeFile(objectPath, bytes);
     return { storageKey };
   }
 
@@ -110,6 +114,7 @@ export class DisabledReceiptStorage implements ReceiptStorage {
   async write(
     _bytes: Buffer,
     _contentType: SupportedReceiptContentType,
+    _objectId: string,
   ): Promise<{ storageKey: string }> {
     throw new ReceiptStorageDisabledError();
   }

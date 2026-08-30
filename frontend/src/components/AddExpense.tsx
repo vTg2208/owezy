@@ -262,13 +262,6 @@ export default function AddExpense({ tripId, currentUserId, participants, onExpe
                   setReceiptFile(null);
                   return;
                 }
-                // 5MB limit
-                if (file.size > 5 * 1024 * 1024) {
-                  alert('File size exceeds 5MB limit. Please choose a smaller file.');
-                  e.target.value = '';
-                  setReceiptFile(null);
-                  return;
-                }
                 setReceiptFile(file);
               }
             }}

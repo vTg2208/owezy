@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { Expense } from '../types';
+import { ReceiptObjectUrlLifecycle } from '../utils/receiptObjectUrl';
 
 interface ExpenseListProps {
   expenses: Expense[];
@@ -8,19 +9,28 @@ interface ExpenseListProps {
 
 export default function ExpenseList({ expenses }: ExpenseListProps) {
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
+  const receiptUrls = useRef<ReceiptObjectUrlLifecycle | null>(null);
 
-  useEffect(() => () => {
-    if (viewingReceipt) URL.revokeObjectURL(viewingReceipt);
-  }, [viewingReceipt]);
+  useEffect(() => {
+    const lifecycle = new ReceiptObjectUrlLifecycle();
+    receiptUrls.current = lifecycle;
+    return () => {
+      lifecycle.dispose();
+      if (receiptUrls.current === lifecycle) receiptUrls.current = null;
+    };
+  }, []);
 
   const closeReceipt = () => {
+    receiptUrls.current?.close();
     setViewingReceipt(null);
   };
 
   const viewReceipt = async (receiptUrl: string) => {
     try {
-      const receipt = await api.readReceipt(receiptUrl);
-      setViewingReceipt(URL.createObjectURL(receipt));
+      const objectUrl = await receiptUrls.current?.load(
+        (signal) => api.readReceipt(receiptUrl, signal),
+      );
+      if (objectUrl) setViewingReceipt(objectUrl);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to load receipt');
     }
