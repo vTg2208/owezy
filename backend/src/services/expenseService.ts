@@ -98,10 +98,18 @@ const expenseInputSchema = z.object({
 
 function parseMajor(value: string | number, field: string): bigint {
   try {
-    if (typeof value === 'number' && (!Number.isFinite(value) || !Number.isSafeInteger(value))) {
-      throw new Error('unsafe number');
+    if (typeof value === 'number') {
+      const text = String(value);
+      if (
+        !Number.isFinite(value)
+        || value > Number.MAX_SAFE_INTEGER / 100
+        || !/^\d+(?:\.\d{1,2})?$/.test(text)
+      ) {
+        throw new Error('unsafe number');
+      }
+      return majorToMinor(text);
     }
-    return BigInt(majorToMinor(String(value)));
+    return majorToMinor(value);
   } catch {
     throw new ServiceError(400, `${field} must be a positive amount with at most two decimal places`);
   }

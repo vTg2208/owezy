@@ -165,6 +165,20 @@ describe('ExpenseService', () => {
     ]);
   });
 
+  it('preserves a finite two-decimal JSON number at the expense boundary', async () => {
+    const repository = new MemoryExpenseRepository();
+
+    await service(repository).createExpense('user-a', 'trip-1', {
+      description: 'Lunch', amount: 12.34,
+      splitType: 'equal', splits: [{ participantId: 'member-a', amount: 0 }],
+    });
+
+    expect(repository.expenses[0]).toMatchObject({ totalMinor: 1234n });
+    expect(repository.expenses[0].splits).toEqual([
+      { membershipId: 'member-a', amountMinor: 1234n },
+    ]);
+  });
+
   it('rejects an unsafe JSON number before it can be rounded into a different amount', async () => {
     const repository = new MemoryExpenseRepository();
 

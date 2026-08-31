@@ -241,11 +241,24 @@ runDatabaseTests('006_production_hardening upgrade', () => {
            'trip_invites_token_hash_check',
            'idempotency_records_completion_check',
            'idempotency_records_actor_membership_id_fkey',
-           'audit_events_actor_membership_id_fkey'
+           'idempotency_records_operation_check',
+           'idempotency_records_idempotency_key_check',
+           'idempotency_records_request_hash_check',
+           'idempotency_records_response_status_check',
+           'audit_events_actor_membership_id_fkey',
+           'audit_events_action_check',
+           'audit_events_entity_type_check',
+           'audit_events_entity_id_check',
+           'audit_events_metadata_check',
+           'trips_id_currency_key'
          )
        ORDER BY conname
     `)).resolves.toMatchObject({ rows: [
+      { conname: 'audit_events_action_check' },
       { conname: 'audit_events_actor_membership_id_fkey' },
+      { conname: 'audit_events_entity_id_check' },
+      { conname: 'audit_events_entity_type_check' },
+      { conname: 'audit_events_metadata_check' },
       { conname: 'expenses_expense_key_check' },
       { conname: 'expenses_status_check' },
       { conname: 'expenses_trip_currency_fkey' },
@@ -253,6 +266,10 @@ runDatabaseTests('006_production_hardening upgrade', () => {
       { conname: 'expenses_voided_lifecycle_check' },
       { conname: 'idempotency_records_actor_membership_id_fkey' },
       { conname: 'idempotency_records_completion_check' },
+      { conname: 'idempotency_records_idempotency_key_check' },
+      { conname: 'idempotency_records_operation_check' },
+      { conname: 'idempotency_records_request_hash_check' },
+      { conname: 'idempotency_records_response_status_check' },
       { conname: 'payments_cancelled_by_membership_fkey' },
       { conname: 'payments_confirmed_by_membership_fkey' },
       { conname: 'payments_lifecycle_check' },
@@ -261,6 +278,7 @@ runDatabaseTests('006_production_hardening upgrade', () => {
       { conname: 'payments_trip_currency_fkey' },
       { conname: 'trip_invites_token_hash_check' },
       { conname: 'trips_currency_check' },
+      { conname: 'trips_id_currency_key' },
     ] });
   });
 
