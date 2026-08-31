@@ -30,6 +30,7 @@ export interface ApiRoutesDependencies {
   messageService: Pick<MessageService, 'sendMessage' | 'listMessages'>;
   receiptService: Pick<ReceiptService, 'uploadReceipt' | 'readReceipt'>;
   receiptMaxBytes: number;
+  receiptUploadsEnabled: boolean;
   authenticate: RequestHandler;
 }
 
@@ -54,6 +55,7 @@ function defaultDependencies(): ApiRoutesDependencies {
       receiptConfig,
     ),
     receiptMaxBytes: receiptConfig.maxBytes,
+    receiptUploadsEnabled: receiptConfig.driver !== 'disabled',
     authenticate: authenticateToken,
   };
 }
@@ -110,9 +112,15 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
     messageService,
     receiptService,
     receiptMaxBytes,
+    receiptUploadsEnabled,
     authenticate,
   } = dependencies;
   const receiptBody = express.raw({ type: () => true, limit: receiptMaxBytes });
+
+  router.use((request, response, next) => {
+    if (request.method === 'GET') response.set('Cache-Control', 'private, no-store');
+    next();
+  });
 
   const idempotentTripMutation = async <T>(
     request: AuthRequest,
@@ -187,6 +195,7 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
       const balanceReport = await expenseService.getBalances(request.userId!, request.params.tripId);
       response.json({
         ...snapshot,
+        capabilities: { receipt_uploads: receiptUploadsEnabled },
         current_member_id: details.currentMembershipId
           ?? details.participants.find((member) => member.firebaseUid === request.userId)?.id,
         ...balanceReport,

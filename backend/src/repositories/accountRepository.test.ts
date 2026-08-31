@@ -133,8 +133,8 @@ class AccountQueryBoundary {
       this.deletionUpdatedInsideTransaction = this.transactionOpen;
       if (normalized.includes('user_id = NULL')) this.membership.userId = null;
       if (normalized.includes("status = 'anonymized'")) this.membership.status = 'anonymized';
-      if (normalized.includes("display_name = 'Former member ' || id")) {
-        this.membership.displayName = `Former member ${this.membership.id}`;
+      if (normalized.includes("display_name = 'Former traveller'")) {
+        this.membership.displayName = 'Former traveller';
       }
       if (normalized.includes('left_at = NULL')) this.membership.leftAt = null;
       if (normalized.includes('anonymized_at = COALESCE(anonymized_at, now())')) {
@@ -212,7 +212,7 @@ describe('PostgresAccountRepository', () => {
     expect(database.membership).toEqual({
       id: 'owner-1',
       userId: null,
-      displayName: 'Former member owner-1',
+      displayName: 'Former traveller',
       role: 'member',
       status: 'anonymized',
       leftAt: null,
@@ -238,7 +238,7 @@ describe('PostgresAccountRepository', () => {
 
     expect(database.membership).toMatchObject({
       userId: null,
-      displayName: 'Former member owner-1',
+      displayName: 'Former traveller',
       role: 'owner',
       status: 'anonymized',
     });

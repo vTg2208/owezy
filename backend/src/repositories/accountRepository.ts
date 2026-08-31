@@ -161,7 +161,7 @@ export class PostgresAccountRepository implements AccountRepository {
         await database.query(
           `UPDATE trip_memberships
               SET user_id = NULL,
-                  display_name = 'Former member ' || id,
+                  display_name = 'Former traveller',
                   status = 'anonymized',
                   left_at = NULL,
                   anonymized_at = COALESCE(anonymized_at, now())

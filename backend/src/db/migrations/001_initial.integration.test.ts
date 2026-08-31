@@ -65,7 +65,7 @@ runDatabaseTests('001_initial migration', () => {
 
     expect(result.rows[0]).toMatchObject({ user_id: null, status: 'anonymized' });
     expect(result.rows[0].anonymized_at).not.toBeNull();
-    expect(result.rows[0].display_name).toContain('Former member');
+    expect(result.rows[0].display_name).toBe('Former traveller');
     expect(departed.rows[0]).toMatchObject({ status: 'left' });
     expect(departed.rows[0].left_at).not.toBeNull();
   });

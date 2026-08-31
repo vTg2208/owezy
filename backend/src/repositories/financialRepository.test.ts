@@ -38,10 +38,12 @@ class FinancialBoundary {
 class InviteAcceptanceBoundary {
   displayName = '';
 
+  constructor(private readonly locked = false) {}
+
   async query(text: string, values: unknown[] = []) {
     const sql = text.replace(/\s+/g, ' ').trim();
-    if (sql.includes('FROM trip_invites WHERE token_hash')) {
-      return { rows: [{ id: 'invite-1', trip_id: 'trip-1', email: 'guest@example.com', status: 'pending', expires_at: new Date('2026-09-01T00:00:00.000Z') }], rowCount: 1 };
+    if (sql.includes('FROM trip_invites i') && sql.includes('JOIN trips')) {
+      return { rows: [{ id: 'invite-1', trip_id: 'trip-1', email: 'guest@example.com', status: 'pending', expires_at: new Date('2026-09-01T00:00:00.000Z'), is_locked: this.locked }], rowCount: 1 };
     }
     if (sql.startsWith('SELECT id FROM users')) {
       return { rows: [{ id: 'user-1' }], rowCount: 1 };
@@ -112,5 +114,22 @@ describe('PostgresFinancialRepository', () => {
 
     expect(database.displayName).toBe(`${'N'.repeat(95)} memb`);
     expect(database.displayName).toHaveLength(100);
+  });
+
+  it('rejects a new invitation acceptance while the room is closed', async () => {
+    const database = new InviteAcceptanceBoundary(true);
+    const repository = new PostgresFinancialRepository(
+      database,
+      async (work) => work(database),
+      () => 'audit-1',
+    );
+
+    const result = await repository.acceptForUser(
+      { uid: 'guest-uid', email: 'guest@example.com', name: 'Guest' },
+      'a'.repeat(64),
+      'member-1234',
+    );
+
+    expect(result).toEqual({ kind: 'locked' });
   });
 });

@@ -175,6 +175,7 @@ describe('applyPendingMigrations', () => {
       '005_owner_continuity.sql',
       '006_production_hardening.sql',
       '007_security_boundaries.sql',
+      '008_former_traveller_labels.sql',
     ]);
   });
 });

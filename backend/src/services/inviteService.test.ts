@@ -27,4 +27,15 @@ describe('InviteService', () => {
       'expired-token',
     )).rejects.toMatchObject({ status: 410 });
   });
+
+  it('rejects an invitation while the room is closed', async () => {
+    const service = new InviteService(repository({
+      acceptForUser: async () => ({ kind: 'locked' } as never),
+    }));
+
+    await expect(service.accept(
+      { uid: 'firebase-1', email: 'guest@example.com', name: 'Guest' },
+      'locked-room-token',
+    )).rejects.toMatchObject({ status: 403, message: 'Room is closed to new travellers' });
+  });
 });

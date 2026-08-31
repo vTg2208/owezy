@@ -25,7 +25,7 @@ export interface InviteRepository {
     database?: QueryExecutor,
   ): Promise<
     | { kind: 'accepted'; tripId: string; membershipId: string }
-    | { kind: 'not-found' | 'expired' | 'email-mismatch' | 'conflict' | 'account-missing' }
+    | { kind: 'not-found' | 'expired' | 'email-mismatch' | 'conflict' | 'account-missing' | 'locked' }
   >;
 }
 
@@ -83,6 +83,7 @@ export class InviteService {
       if (result.kind === 'not-found') throw new ServiceError(404, 'Invitation not found');
       if (result.kind === 'expired') throw new ServiceError(410, 'Invitation has expired');
       if (result.kind === 'email-mismatch') throw new ServiceError(403, 'Invitation belongs to another email address');
+      if (result.kind === 'locked') throw new ServiceError(403, 'Room is closed to new travellers');
       if (result.kind === 'account-missing') throw new ServiceError(409, 'Sync your account before accepting an invitation');
       throw new ServiceError(409, 'Invitation is no longer pending');
     }

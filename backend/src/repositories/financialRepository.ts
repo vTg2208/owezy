@@ -265,12 +265,15 @@ export class PostgresFinancialRepository implements PaymentRepository, InviteRep
     database?: QueryExecutor,
   ): Promise<
     | { kind: 'accepted'; tripId: string; membershipId: string }
-    | { kind: 'not-found' | 'expired' | 'email-mismatch' | 'conflict' | 'account-missing' }
+    | { kind: 'not-found' | 'expired' | 'email-mismatch' | 'conflict' | 'account-missing' | 'locked' }
   > {
     return this.run(database, async (executor) => {
       const result = await executor.query(
-        `SELECT id, trip_id, email, status, expires_at
-           FROM trip_invites WHERE token_hash = $1 FOR UPDATE`,
+        `SELECT i.id, i.trip_id, i.email, i.status, i.expires_at, t.is_locked
+           FROM trip_invites i
+           JOIN trips t ON t.id = i.trip_id
+          WHERE i.token_hash = $1
+          FOR UPDATE OF i, t`,
         [tokenHash],
       );
       const invite = result.rows[0];
@@ -300,6 +303,7 @@ export class PostgresFinancialRepository implements PaymentRepository, InviteRep
         await executor.query(`UPDATE trip_invites SET status = 'expired' WHERE id = $1`, [invite.id]);
         return { kind: 'expired' };
       }
+      if (invite.is_locked) return { kind: 'locked' };
       const existing = await executor.query(
         `SELECT id, status FROM trip_memberships
           WHERE trip_id = $1 AND user_id = $2 FOR UPDATE`,

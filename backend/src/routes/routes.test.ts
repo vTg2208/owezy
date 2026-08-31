@@ -10,10 +10,10 @@ import type { QueryExecutor } from '../repositories/database';
 
 const servers: Server[] = [];
 
-async function request(router: express.Router, path: string, init?: RequestInit) {
+async function request(router: express.Router, path: string, init?: RequestInit, basePath = '/api') {
   const app = express();
   app.use(express.json({ strict: false }));
-  app.use('/api', router);
+  app.use(basePath, router);
   app.use((error: Error, _request: Request, response: Response, _next: NextFunction) => {
     response.status(500).json({ error: error.message });
   });
@@ -21,7 +21,7 @@ async function request(router: express.Router, path: string, init?: RequestInit)
   servers.push(server);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const port = (server.address() as AddressInfo).port;
-  return fetch(`http://127.0.0.1:${port}/api${path}`, {
+  return fetch(`http://127.0.0.1:${port}${basePath}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   });
@@ -178,6 +178,7 @@ describe('API routes', () => {
         },
       },
       receiptMaxBytes: 8,
+      receiptUploadsEnabled: true,
       ...overrides,
     };
   }
@@ -192,6 +193,21 @@ describe('API routes', () => {
       trip: { id: 'trip-1', name: 'Goa', room_code: 'ABC123', admin_id: 'owner-1', is_locked: 0, created_at: '2026-08-31T00:00:00.000Z' },
       participants: [{ id: 'member-1', trip_id: 'trip-1', name: 'One', is_admin: 0, created_at: '2026-08-31T00:00:00.000Z' }],
       expenses: [{ id: 'expense-1', trip_id: 'trip-1', paid_by: 'member-1', paid_by_name: 'One', description: 'Meal', amount: 12.34, split_type: 'equal', created_at: '2026-08-31T00:10:00.000Z' }],
+    });
+  });
+
+  it('marks authenticated trip reads private and reports disabled receipt uploads', async () => {
+    const response = await request(
+      createApiRouter(dependencies({ receiptUploadsEnabled: false })),
+      '/trips/trip-1',
+      undefined,
+      '/api/v1',
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(await response.json()).toMatchObject({
+      capabilities: { receipt_uploads: false },
     });
   });
 

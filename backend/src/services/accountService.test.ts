@@ -69,8 +69,7 @@ class MemoryAccountRepository implements AccountRepository {
     for (const membership of this.memberships.values()) {
       if (membership.firebaseUid === firebaseUid) {
         membership.firebaseUid = null;
-        membership.displayName = `Former member ${[...this.memberships.entries()]
-          .find(([, candidate]) => candidate === membership)?.[0]}`;
+        membership.displayName = 'Former traveller';
         membership.status = 'anonymized';
       }
     }
@@ -148,7 +147,7 @@ describe('AccountService', () => {
     expect(repository.memberships.get('member-1')).toEqual({
       firebaseUid: null,
       tripId: 'trip-1',
-      displayName: 'Former member member-1',
+      displayName: 'Former traveller',
       role: 'member',
       status: 'anonymized',
       createdAt: new Date('2026-08-01T00:00:00.000Z'),

@@ -43,7 +43,7 @@ BEGIN
   IF NEW.user_id IS NULL AND OLD.user_id IS NOT NULL AND NEW.status <> 'anonymized' THEN
     NEW.status := 'anonymized';
     NEW.anonymized_at := COALESCE(NEW.anonymized_at, now());
-    NEW.display_name := 'Former member ' || OLD.id;
+    NEW.display_name := 'Former traveller';
     NEW.left_at := NULL;
   END IF;
   RETURN NEW;
@@ -75,7 +75,7 @@ BEGIN
          status = 'anonymized',
          left_at = NULL,
          anonymized_at = now(),
-         display_name = 'Former member ' || id
+         display_name = 'Former traveller'
    WHERE id = p_membership_id;
 END;
 $$;
