@@ -23,6 +23,9 @@ function mapTrip(row: Record<string, any>, prefix = ''): TripRecord {
     ownerMembershipId: row[`${prefix}owner_membership_id`] ?? row.owner_membership_id,
     isLocked: row[`${prefix}is_locked`] ?? row.is_locked,
     createdAt: row[`${prefix}created_at`] ?? row.trip_created_at,
+    ...((row[`${prefix}currency`] ?? row.currency)
+      ? { currency: row[`${prefix}currency`] ?? row.currency }
+      : {}),
   };
 }
 
@@ -177,7 +180,8 @@ export class PostgresTripRepository implements TripRepository {
   getTripDetailsForMember(firebaseUid: string, tripId: string): Promise<TripDetails | null> {
     return this.transaction(async (database) => {
       const authorization = await database.query(
-        `SELECT t.id, t.name, t.room_code, t.owner_membership_id, t.is_locked, t.created_at
+        `SELECT t.id, t.name, t.room_code, t.owner_membership_id, t.is_locked, t.currency,
+                t.created_at, m.id AS current_membership_id
            FROM trips t
            JOIN trip_memberships m ON m.trip_id = t.id AND m.status = 'active'
            JOIN users u ON u.id = m.user_id
@@ -202,7 +206,11 @@ export class PostgresTripRepository implements TripRepository {
                   payer.display_name AS paid_by_name,
                   e.description,
                   e.total_minor,
+                  e.currency,
                   e.split_type,
+                  e.expense_key,
+                  e.version,
+                  e.status,
                   receipt.id AS receipt_id,
                   e.created_at
              FROM expenses e
@@ -211,7 +219,7 @@ export class PostgresTripRepository implements TripRepository {
                ON receipt.expense_id = e.id
               AND receipt.trip_id = e.trip_id
               AND receipt.status = 'attached'
-            WHERE e.trip_id = $1
+            WHERE e.trip_id = $1 AND e.status = 'active'
             ORDER BY e.created_at DESC, e.id DESC`,
           [tripId],
         ),
@@ -228,11 +236,18 @@ export class PostgresTripRepository implements TripRepository {
           description: row.description,
           amountMinor: BigInt(row.total_minor),
           splitType: row.split_type,
+          ...(row.expense_key ? { expenseKey: row.expense_key } : {}),
+          ...(row.version !== undefined ? { version: Number(row.version) } : {}),
+          ...(row.status ? { status: row.status } : {}),
+          ...(row.currency ? { currency: row.currency } : {}),
           ...(row.receipt_id ? {
             receiptUrl: `/api/trips/${encodeURIComponent(row.trip_id)}/receipts/${encodeURIComponent(row.receipt_id)}`,
           } : {}),
           createdAt: row.created_at,
         })),
+        ...(authorization.rows[0].current_membership_id
+          ? { currentMembershipId: authorization.rows[0].current_membership_id }
+          : {}),
       };
     });
   }

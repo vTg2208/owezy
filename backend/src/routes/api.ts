@@ -1,14 +1,20 @@
 import express, { NextFunction, RequestHandler, Response, Router } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { PostgresExpenseRepository } from '../repositories/expenseRepository';
+import { PostgresFinancialRepository } from '../repositories/financialRepository';
 import { PostgresMessageRepository } from '../repositories/messageRepository';
 import { PostgresReceiptRepository } from '../repositories/receiptRepository';
 import { PostgresTripRepository } from '../repositories/tripRepository';
 import { ServiceError } from '../services/errors';
 import { ExpenseService, minorToLegacyNumber } from '../services/expenseService';
+import { IdempotencyService } from '../services/idempotencyService';
+import { InviteService } from '../services/inviteService';
 import { MessageService } from '../services/messageService';
 import { ReceiptService } from '../services/receiptService';
 import { TripService } from '../services/tripService';
+import { PaymentService, PaymentRecord } from '../services/paymentService';
+import { minorToMajor } from '../domain/money';
+import type { QueryExecutor } from '../repositories/database';
 import {
   DisabledReceiptStorage,
   getReceiptStorageConfig,
@@ -17,7 +23,11 @@ import {
 
 export interface ApiRoutesDependencies {
   tripService: Pick<TripService, 'createTrip' | 'joinTrip' | 'getTrip' | 'setLocked' | 'removeMember'>;
-  expenseService: Pick<ExpenseService, 'createExpense' | 'getBalances'>;
+  expenseService: Pick<ExpenseService, 'createExpense' | 'getBalances' | 'correctExpense' | 'voidExpense'>;
+  paymentService: Pick<PaymentService, 'create' | 'confirm' | 'reject' | 'cancel'>;
+  inviteService: Pick<InviteService, 'create' | 'revoke' | 'accept'>;
+  financialRepository: Pick<PostgresFinancialRepository, 'findActiveMembershipId' | 'listAuditForMember' | 'listPaymentsForMember'>;
+  idempotencyService: Pick<IdempotencyService, 'execute'>;
   messageService: Pick<MessageService, 'sendMessage' | 'listMessages'>;
   receiptService: Pick<ReceiptService, 'uploadReceipt' | 'readReceipt'>;
   receiptMaxBytes: number;
@@ -26,13 +36,19 @@ export interface ApiRoutesDependencies {
 
 function defaultDependencies(): ApiRoutesDependencies {
   const tripRepository = new PostgresTripRepository();
+  const expenseRepository = new PostgresExpenseRepository();
+  const financialRepository = new PostgresFinancialRepository();
   const receiptConfig = getReceiptStorageConfig();
   const receiptStorage = receiptConfig.root
     ? new LocalReceiptStorage(receiptConfig.root)
     : new DisabledReceiptStorage();
   return {
     tripService: new TripService(tripRepository),
-    expenseService: new ExpenseService(new PostgresExpenseRepository()),
+    expenseService: new ExpenseService(expenseRepository),
+    paymentService: new PaymentService(financialRepository),
+    inviteService: new InviteService(financialRepository),
+    financialRepository,
+    idempotencyService: new IdempotencyService(),
     messageService: new MessageService(new PostgresMessageRepository()),
     receiptService: new ReceiptService(
       tripRepository,
@@ -42,6 +58,18 @@ function defaultDependencies(): ApiRoutesDependencies {
     ),
     receiptMaxBytes: receiptConfig.maxBytes,
     authenticate: authenticateToken,
+  };
+}
+
+function paymentResponse(payment: PaymentRecord) {
+  return {
+    id: payment.id,
+    status: payment.status,
+    ...(payment.payerMembershipId ? { payer_membership_id: payment.payerMembershipId } : {}),
+    ...(payment.payeeMembershipId ? { payee_membership_id: payment.payeeMembershipId } : {}),
+    ...(payment.amountMinor !== undefined ? { amount: minorToMajor(payment.amountMinor) } : {}),
+    ...(payment.currency ? { currency: payment.currency } : {}),
+    ...(payment.note ? { note: payment.note } : {}),
   };
 }
 
@@ -58,12 +86,30 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
   const {
     tripService,
     expenseService,
+    paymentService,
+    inviteService,
+    financialRepository,
+    idempotencyService,
     messageService,
     receiptService,
     receiptMaxBytes,
     authenticate,
   } = dependencies;
   const receiptBody = express.raw({ type: () => true, limit: receiptMaxBytes });
+
+  const idempotentTripMutation = async <T>(
+    request: AuthRequest,
+    operation: string,
+    payload: unknown,
+    work: (database: QueryExecutor) => Promise<{ status: number; body: T }>,
+  ) => {
+    const actorId = await financialRepository.findActiveMembershipId(
+      request.userId!, request.params.tripId,
+    );
+    if (!actorId) throw new ServiceError(403, 'You are not a member of this trip');
+    const key = request.get('idempotency-key') ?? '';
+    return idempotencyService.execute(actorId, operation, key, payload, work);
+  };
 
   router.post('/trips', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
@@ -94,7 +140,8 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
   router.get('/trips/:tripId', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
       const details = await tripService.getTrip(request.userId!, request.params.tripId);
-      response.json({
+      const versioned = request.baseUrl.endsWith('/v1');
+      const snapshot = {
         trip: {
           id: details.trip.id,
           name: details.trip.name,
@@ -102,6 +149,7 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
           admin_id: details.trip.ownerMembershipId,
           is_locked: details.trip.isLocked ? 1 : 0,
           created_at: details.trip.createdAt,
+          ...(versioned ? { currency: details.trip.currency ?? 'INR' } : {}),
         },
         participants: details.participants.map((membership) => ({
           id: membership.id,
@@ -120,7 +168,24 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
           split_type: expense.splitType,
           receipt_url: expense.receiptUrl,
           created_at: expense.createdAt,
+          ...(versioned ? {
+            expense_key: expense.expenseKey ?? expense.id,
+            version: expense.version ?? 1,
+            status: expense.status ?? 'active',
+            currency: expense.currency ?? details.trip.currency ?? 'INR',
+          } : {}),
         })),
+      };
+      if (!versioned) {
+        response.json(snapshot);
+        return;
+      }
+      const balanceReport = await expenseService.getBalances(request.userId!, request.params.tripId);
+      response.json({
+        ...snapshot,
+        current_member_id: details.currentMembershipId
+          ?? details.participants.find((member) => member.firebaseUid === request.userId)?.id,
+        ...balanceReport,
       });
     } catch (error) {
       handleError(error, response, next);
@@ -129,11 +194,201 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
 
   router.post('/trips/:tripId/expenses', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
+      if (request.baseUrl.endsWith('/v1')) {
+        const result = await idempotentTripMutation(
+          request,
+          'expense.create',
+          request.body,
+          async (database) => ({
+            status: 201,
+            body: await expenseService.createExpense(
+              request.userId!, request.params.tripId, request.body, database,
+            ),
+          }),
+        );
+        response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+        return;
+      }
       response.status(201).json(await expenseService.createExpense(
-        request.userId!,
-        request.params.tripId,
-        request.body,
+        request.userId!, request.params.tripId, request.body,
       ));
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.post('/trips/:tripId/expenses/:expenseId/correct', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const { expectedVersion, ...input } = request.body ?? {};
+      const result = await idempotentTripMutation(
+        request,
+        'expense.correct',
+        request.body,
+        async (database) => ({
+          status: 200,
+          body: await expenseService.correctExpense(
+            request.userId!, request.params.tripId, request.params.expenseId,
+            expectedVersion, input, database,
+          ),
+        }),
+      );
+      response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.post('/trips/:tripId/expenses/:expenseId/void', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const result = await idempotentTripMutation(
+        request,
+        'expense.void',
+        request.body,
+        async (database) => ({
+          status: 200,
+          body: await expenseService.voidExpense(
+            request.userId!, request.params.tripId, request.params.expenseId,
+            request.body?.expectedVersion, database,
+          ),
+        }),
+      );
+      response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.post('/trips/:tripId/payments', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const result = await idempotentTripMutation(
+        request,
+        'payment.create',
+        request.body,
+        async (database) => ({
+          status: 201,
+          body: paymentResponse(await paymentService.create(
+            request.userId!, request.params.tripId, request.body, database,
+          )),
+        }),
+      );
+      response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.get('/trips/:tripId/payments', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const payments = await financialRepository.listPaymentsForMember(
+        request.userId!, request.params.tripId,
+      );
+      if (!payments) throw new ServiceError(403, 'You are not a member of this trip');
+      response.json({ payments: payments.map(paymentResponse) });
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  for (const [action, operation] of [
+    ['confirm', 'payment.confirm'],
+    ['reject', 'payment.reject'],
+    ['cancel', 'payment.cancel'],
+  ] as const) {
+    router.post(`/trips/:tripId/payments/:paymentId/${action}`, authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+      try {
+        const result = await idempotentTripMutation(
+          request,
+          operation,
+          request.body ?? {},
+          async (database) => ({
+            status: 200,
+            body: paymentResponse(await paymentService[action](
+              request.userId!, request.params.tripId, request.params.paymentId, database,
+            )),
+          }),
+        );
+        response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+      } catch (error) {
+        handleError(error, response, next);
+      }
+    });
+  }
+
+  router.post('/trips/:tripId/invites', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const result = await idempotentTripMutation(
+        request,
+        'invite.create',
+        request.body,
+        async (database) => ({
+          status: 201,
+          body: await inviteService.create(request.userId!, request.params.tripId, request.body, database),
+        }),
+      );
+      response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.delete('/trips/:tripId/invites/:inviteId', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const result = await idempotentTripMutation(
+        request,
+        'invite.revoke',
+        { inviteId: request.params.inviteId },
+        async (database) => ({
+          status: 200,
+          body: await inviteService.revoke(
+            request.userId!, request.params.tripId, request.params.inviteId, database,
+          ),
+        }),
+      );
+      response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.post('/invites/accept', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const principal = request.principal!;
+      const key = request.get('idempotency-key') ?? '';
+      if (!key.trim() || key.length > 128) {
+        throw new ServiceError(400, 'Idempotency-Key is required and must be at most 128 characters');
+      }
+      const accepted = await inviteService.accept(
+        { uid: principal.uid, email: principal.email, name: principal.name },
+        request.body?.token,
+      );
+      const result = await idempotencyService.execute(
+        accepted.membershipId,
+        'invite.accept',
+        key,
+        { token: request.body?.token },
+        async () => ({ status: 200, body: accepted }),
+      );
+      response.set('Idempotency-Replayed', String(result.replayed)).status(result.status).json(result.body);
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.get('/trips/:tripId/audit', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const events = await financialRepository.listAuditForMember(
+        request.userId!, request.params.tripId, Number(request.query.limit ?? 100),
+      );
+      if (!events) throw new ServiceError(403, 'You are not a member of this trip');
+      response.json({ events: events.map((event) => ({
+        id: event.id,
+        actor_membership_id: event.actorMembershipId,
+        action: event.action,
+        entity_type: event.entityType,
+        entity_id: event.entityId,
+        metadata: event.metadata,
+        created_at: event.createdAt,
+      })) });
     } catch (error) {
       handleError(error, response, next);
     }

@@ -2,6 +2,7 @@ import { allocateEqual, majorToMinor } from '../domain/money';
 import { generateId } from '../utils/helpers';
 import { z } from 'zod';
 import { ServiceError } from './errors';
+import type { QueryExecutor } from '../repositories/database';
 
 export type SplitType = 'equal' | 'custom' | 'percentage';
 
@@ -49,11 +50,39 @@ export interface BalanceLedger {
 }
 
 export interface ExpenseRepository {
-  findActiveMembership(firebaseUid: string, tripId: string): Promise<LedgerMembership | null>;
-  listActiveMemberships(tripId: string): Promise<LedgerMembership[]>;
-  createExpense(expense: NewExpense): Promise<void>;
+  findActiveMembership(firebaseUid: string, tripId: string, database?: QueryExecutor): Promise<LedgerMembership | null>;
+  listActiveMemberships(tripId: string, database?: QueryExecutor): Promise<LedgerMembership[]>;
+  createExpense(expense: NewExpense, database?: QueryExecutor): Promise<void>;
   getBalanceLedgerForMember(firebaseUid: string, tripId: string): Promise<BalanceLedger | null>;
+  correctExpenseForActor?(
+    firebaseUid: string,
+    tripId: string,
+    expenseId: string,
+    expectedVersion: number,
+    replacement: ExpenseRevision,
+    database?: QueryExecutor,
+  ): Promise<ExpenseLifecycleResult>;
+  voidExpenseForActor?(
+    firebaseUid: string,
+    tripId: string,
+    expenseId: string,
+    expectedVersion: number,
+    database?: QueryExecutor,
+  ): Promise<ExpenseLifecycleResult>;
 }
+
+export interface ExpenseRevision {
+  id: string;
+  description: string;
+  totalMinor: bigint;
+  splitType: SplitType;
+  splits: ExpenseAllocation[];
+  receiptId?: string;
+}
+
+export type ExpenseLifecycleResult =
+  | { kind: 'updated'; expenseId: string; expenseKey: string; version: number; status: 'active' | 'voided' }
+  | { kind: 'forbidden' | 'not-found' | 'conflict' };
 
 export interface ExpenseSplitInput {
   participantId: string;
@@ -172,6 +201,91 @@ function allocatePercentages(
   return provisional.map(({ membershipId, amountMinor }) => ({ membershipId, amountMinor }));
 }
 
+async function prepareExpense(
+  repository: ExpenseRepository,
+  tripId: string,
+  input: ExpenseInput,
+  database?: QueryExecutor,
+): Promise<Omit<ExpenseRevision, 'id'>> {
+  const parsed = expenseInputSchema.safeParse(input);
+  if (!parsed.success) throw new ServiceError(400, 'Invalid expense payload');
+  const validatedInput = parsed.data;
+
+  if (containsReceiptMetadata(validatedInput.receiptUrl)) {
+    throw new ServiceError(400, 'receiptUrl is not accepted; upload the receipt first and send receiptId');
+  }
+  const receiptId = parseReceiptId(validatedInput.receiptId);
+  const description = validatedInput.description.trim();
+  if (!description) throw new ServiceError(400, 'description and amount are required');
+  const totalMinor = parseMajor(validatedInput.amount, 'amount');
+  const splitType = validatedInput.splitType ?? 'equal';
+
+  const activeMemberships = await repository.listActiveMemberships(tripId, database);
+  const activeIds = new Set(activeMemberships.map((membership) => membership.id));
+  const requestedSplits = validatedInput.splits;
+  if (requestedSplits && requestedSplits.length === 0) {
+    throw new ServiceError(400, 'At least one split member is required');
+  }
+  const splitInputs = requestedSplits ?? activeMemberships.map((membership) => ({
+    participantId: membership.id,
+    amount: 0,
+  }));
+  const membershipIds = splitInputs.map((split) => split.participantId);
+  if (new Set(membershipIds).size !== membershipIds.length) {
+    throw new ServiceError(400, 'Split members must not contain duplicates');
+  }
+  if (membershipIds.some((membershipId) => !activeIds.has(membershipId))) {
+    throw new ServiceError(400, 'Every split member must be an active member of this trip');
+  }
+
+  let allocations: ExpenseAllocation[];
+  if (splitType === 'equal') {
+    try {
+      allocations = allocateEqual(totalMinor, membershipIds).map((allocation) => ({
+        membershipId: allocation.memberId,
+        amountMinor: allocation.amountMinor,
+      }));
+    } catch (error) {
+      throw new ServiceError(400, error instanceof Error ? error.message : 'Invalid equal split');
+    }
+  } else if (splitType === 'custom') {
+    allocations = splitInputs.map((split) => ({
+      membershipId: split.participantId,
+      amountMinor: parseMajor(split.amount, 'Split amount'),
+    }));
+    if (allocations.reduce((sum, split) => sum + split.amountMinor, 0n) !== totalMinor) {
+      throw new ServiceError(400, 'Custom splits must equal the expense total');
+    }
+  } else {
+    const percentageSplits = splitInputs.map((split, index) => ({
+      membershipId: split.participantId,
+      basisPoints: percentageToBasisPoints(split.amount),
+      index,
+    }));
+    if (percentageSplits.reduce((sum, split) => sum + split.basisPoints, 0) !== 10000) {
+      throw new ServiceError(400, 'Percentages must add up to 100');
+    }
+    allocations = allocatePercentages(totalMinor, percentageSplits);
+    if (allocations.some((allocation) => allocation.amountMinor <= 0n)) {
+      throw new ServiceError(400, 'Every split member must receive a positive amount');
+    }
+  }
+
+  return {
+    description,
+    totalMinor,
+    splitType,
+    splits: allocations,
+    ...(receiptId ? { receiptId } : {}),
+  };
+}
+
+function lifecycleError(result: Exclude<ExpenseLifecycleResult, { kind: 'updated' }>): never {
+  if (result.kind === 'not-found') throw new ServiceError(404, 'Expense not found');
+  if (result.kind === 'conflict') throw new ServiceError(409, 'Expense version is stale or no longer active');
+  throw new ServiceError(403, 'Only the payer or trip owner can change this expense');
+}
+
 export class ExpenseService {
   constructor(
     private readonly repository: ExpenseRepository,
@@ -182,94 +296,64 @@ export class ExpenseService {
     firebaseUid: string,
     tripId: string,
     input: ExpenseInput,
+    database?: QueryExecutor,
   ): Promise<{ expenseId: string; splitType: SplitType; memberCount: number }> {
-    const actor = await this.repository.findActiveMembership(firebaseUid, tripId);
+    const actor = await this.repository.findActiveMembership(firebaseUid, tripId, database);
     if (!actor) throw new ServiceError(403, 'You are not a member of this trip');
-
-    const parsed = expenseInputSchema.safeParse(input);
-    if (!parsed.success) throw new ServiceError(400, 'Invalid expense payload');
-    const validatedInput = parsed.data;
-
-    if (containsReceiptMetadata(validatedInput.receiptUrl)) {
-      throw new ServiceError(
-        400,
-        'receiptUrl is not accepted; upload the receipt first and send receiptId',
-      );
-    }
-    const receiptId = parseReceiptId(validatedInput.receiptId);
-
-    const description = validatedInput.description.trim();
-    if (!description) throw new ServiceError(400, 'description and amount are required');
-    const totalMinor = parseMajor(validatedInput.amount, 'amount');
-    const splitType = validatedInput.splitType ?? 'equal';
-    if (!['equal', 'custom', 'percentage'].includes(splitType)) {
-      throw new ServiceError(400, 'Invalid split type');
-    }
-
-    const activeMemberships = await this.repository.listActiveMemberships(tripId);
-    const activeIds = new Set(activeMemberships.map((membership) => membership.id));
-    const requestedSplits = validatedInput.splits;
-    if (requestedSplits && requestedSplits.length === 0) {
-      throw new ServiceError(400, 'At least one split member is required');
-    }
-
-    const splitInputs = requestedSplits ?? activeMemberships.map((membership) => ({
-      participantId: membership.id,
-      amount: 0,
-    }));
-    const membershipIds = splitInputs.map((split) => split.participantId);
-    if (new Set(membershipIds).size !== membershipIds.length) {
-      throw new ServiceError(400, 'Split members must not contain duplicates');
-    }
-    if (membershipIds.some((membershipId) => !activeIds.has(membershipId))) {
-      throw new ServiceError(400, 'Every split member must be an active member of this trip');
-    }
-
-    let allocations: ExpenseAllocation[];
-    if (splitType === 'equal') {
-      try {
-        allocations = allocateEqual(totalMinor, membershipIds).map((allocation) => ({
-          membershipId: allocation.memberId,
-          amountMinor: allocation.amountMinor,
-        }));
-      } catch (error) {
-        throw new ServiceError(400, error instanceof Error ? error.message : 'Invalid equal split');
-      }
-    } else if (splitType === 'custom') {
-      allocations = splitInputs.map((split) => ({
-        membershipId: split.participantId,
-        amountMinor: parseMajor(split.amount, 'Split amount'),
-      }));
-      if (allocations.reduce((sum, split) => sum + split.amountMinor, 0n) !== totalMinor) {
-        throw new ServiceError(400, 'Custom splits must equal the expense total');
-      }
-    } else {
-      const percentageSplits = splitInputs.map((split, index) => ({
-        membershipId: split.participantId,
-        basisPoints: percentageToBasisPoints(split.amount),
-        index,
-      }));
-      if (percentageSplits.reduce((sum, split) => sum + split.basisPoints, 0) !== 10000) {
-        throw new ServiceError(400, 'Percentages must add up to 100');
-      }
-      allocations = allocatePercentages(totalMinor, percentageSplits);
-      if (allocations.some((allocation) => allocation.amountMinor <= 0n)) {
-        throw new ServiceError(400, 'Every split member must receive a positive amount');
-      }
-    }
-
+    const prepared = await prepareExpense(this.repository, tripId, input, database);
     const expenseId = this.createId();
     await this.repository.createExpense({
       id: expenseId,
       tripId,
       paidByMembershipId: actor.id,
-      description,
-      totalMinor,
-      splitType,
-      splits: allocations,
-      ...(receiptId ? { receiptId } : {}),
-    });
-    return { expenseId, splitType, memberCount: allocations.length };
+      ...prepared,
+    }, database);
+    return { expenseId, splitType: prepared.splitType, memberCount: prepared.splits.length };
+  }
+
+  async correctExpense(
+    firebaseUid: string,
+    tripId: string,
+    expenseId: string,
+    expectedVersion: number,
+    input: ExpenseInput,
+    database?: QueryExecutor,
+  ) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      throw new ServiceError(400, 'expectedVersion must be a positive integer');
+    }
+    if (!this.repository.correctExpenseForActor) {
+      throw new ServiceError(503, 'Expense corrections are unavailable');
+    }
+    const replacement: ExpenseRevision = {
+      id: this.createId(),
+      ...await prepareExpense(this.repository, tripId, input, database),
+    };
+    const result = await this.repository.correctExpenseForActor(
+      firebaseUid, tripId, expenseId, expectedVersion, replacement, database,
+    );
+    if (result.kind !== 'updated') lifecycleError(result);
+    return result;
+  }
+
+  async voidExpense(
+    firebaseUid: string,
+    tripId: string,
+    expenseId: string,
+    expectedVersion: number,
+    database?: QueryExecutor,
+  ) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      throw new ServiceError(400, 'expectedVersion must be a positive integer');
+    }
+    if (!this.repository.voidExpenseForActor) {
+      throw new ServiceError(503, 'Expense voiding is unavailable');
+    }
+    const result = await this.repository.voidExpenseForActor(
+      firebaseUid, tripId, expenseId, expectedVersion, database,
+    );
+    if (result.kind !== 'updated') lifecycleError(result);
+    return result;
   }
 
   async getBalances(firebaseUid: string, tripId: string): Promise<{

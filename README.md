@@ -11,6 +11,9 @@ Trip Expense Manager is a React and Express application for shared trip expenses
 - Authenticated JPEG, PNG, and WebP receipt upload/read endpoints.
 - Pending receipt state so an upload can occur before its expense is created.
 - PostgreSQL application persistence and a restartable MongoDB migration command.
+- Recipient-confirmed settlements; pending, rejected, and cancelled payments never change balances.
+- Append-only expense corrections and voids with immutable audit history.
+- Hashed, expiring trip invitations and transactional idempotency for financial writes.
 
 Receipt bytes are never stored in PostgreSQL or expense JSON. PostgreSQL stores only a server-generated storage key, MIME type, byte size, and SHA-256 checksum. `receipt_url` remains the frontend response field, but it now contains an authenticated application URL rather than Base64 data or an opaque storage key.
 
@@ -84,6 +87,14 @@ Start the frontend separately:
 cd frontend
 npm run dev
 ```
+
+## Financial API lifecycle
+
+New clients should use `/api/v1`; the existing `/api` routes remain available during migration. Send a unique `Idempotency-Key` header with every versioned expense write and every payment, correction, void, or invitation mutation. A matching retry returns the stored status and body with `Idempotency-Replayed: true`; reusing a key for a different payload returns `409`.
+
+Payments start as `pending`. Only the recipient can confirm or reject them, only the payer can cancel them, and every terminal transition is final. Correcting an expense requires `expectedVersion`, voids the current row, and creates the next active version under the same logical `expense_key`; voiding also requires `expectedVersion`. Only active expense versions and confirmed payments contribute to balances.
+
+Invitation responses expose the raw token once. PostgreSQL stores only its SHA-256 hash. Invitation acceptance requires the authenticated Firebase email to match, and all invitation mutation routes require an `Idempotency-Key`. Audit history is available to active trip members at `GET /api/v1/trips/:tripId/audit`; payment state is available at `GET /api/v1/trips/:tripId/payments`.
 
 ## Receipt lifecycle and cleanup
 

@@ -146,6 +146,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
   app.use(createAccessLogger(logger));
 
+  app.use('/api/v1/auth', authRoutes);
+  app.use('/api/v1', apiRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api', apiRoutes);
 

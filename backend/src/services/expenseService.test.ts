@@ -45,6 +45,16 @@ function service(repository = new MemoryExpenseRepository()): ExpenseService {
 }
 
 describe('ExpenseService', () => {
+  it('rejects a correction when the expected version is stale', async () => {
+    const repository = Object.assign(new MemoryExpenseRepository(), {
+      correctExpenseForActor: async () => ({ kind: 'conflict' as const }),
+    });
+    const service = new ExpenseService(repository, () => 'replacement-2');
+
+    await expect(service.correctExpense('firebase-1', 'trip-1', 'expense-1', 1, {
+      description: 'Corrected meal', amount: '10.00', splitType: 'equal',
+    })).rejects.toMatchObject({ status: 409 });
+  });
   it('returns controlled validation errors for non-string descriptions and malformed splits', async () => {
     const expenseService = service();
 

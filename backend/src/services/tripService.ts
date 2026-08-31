@@ -22,6 +22,7 @@ export interface TripRecord {
   ownerMembershipId: string;
   isLocked: boolean;
   createdAt: Date;
+  currency?: string;
 }
 
 export interface TripExpenseSummary {
@@ -34,12 +35,17 @@ export interface TripExpenseSummary {
   splitType: 'equal' | 'custom' | 'percentage';
   receiptUrl?: string;
   createdAt: Date;
+  expenseKey?: string;
+  version?: number;
+  status?: 'active' | 'voided';
+  currency?: string;
 }
 
 export interface TripDetails {
   trip: TripRecord;
   participants: Membership[];
   expenses: TripExpenseSummary[];
+  currentMembershipId?: string;
 }
 
 export type JoinResult =

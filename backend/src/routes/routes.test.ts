@@ -6,6 +6,7 @@ import { createApiRouter } from './api';
 import { createAuthRouter } from './auth';
 import { AuthRequest } from '../middleware/auth';
 import { ServiceError } from '../services/errors';
+import type { QueryExecutor } from '../repositories/database';
 
 const servers: Server[] = [];
 
@@ -99,6 +100,32 @@ describe('API routes', () => {
       expenseService: {
         async createExpense() { return { expenseId: 'expense-1', splitType: 'equal' as const, memberCount: 1 }; },
         async getBalances() { return { balances: [], settlements: [] }; },
+        async correctExpense() { return { kind: 'updated' as const, expenseId: 'expense-2', expenseKey: 'expense-1', version: 2, status: 'active' as const }; },
+        async voidExpense() { return { kind: 'updated' as const, expenseId: 'expense-1', expenseKey: 'expense-1', version: 1, status: 'voided' as const }; },
+      },
+      paymentService: {
+        async create() { return { id: 'payment-1', status: 'pending' as const, amountMinor: 100n, currency: 'INR' }; },
+        async confirm() { return { id: 'payment-1', status: 'confirmed' as const }; },
+        async reject() { return { id: 'payment-1', status: 'rejected' as const }; },
+        async cancel() { return { id: 'payment-1', status: 'cancelled' as const }; },
+      },
+      inviteService: {
+        async create() { return { inviteId: 'invite-1', token: 'secret-token', expiresInHours: 168 }; },
+        async revoke() { return { success: true as const }; },
+        async accept() { return { tripId: 'trip-1', membershipId: 'member-1' }; },
+      },
+      financialRepository: {
+        async findActiveMembershipId() { return 'member-1'; },
+        async listAuditForMember() { return []; },
+        async listPaymentsForMember() { return [{
+          id: 'payment-1', status: 'pending' as const, payerMembershipId: 'member-1',
+          payeeMembershipId: 'member-2', amountMinor: 100n, currency: 'INR',
+        }]; },
+      },
+      idempotencyService: {
+        async execute<T>(_actor: string, _operation: string, _key: string, _payload: unknown, work: (database: QueryExecutor) => Promise<{ status: number; body: T }>) {
+          return { replayed: false, ...await work({ query: async () => ({ rows: [], rowCount: 0 }) }) };
+        },
       },
       messageService: {
         async sendMessage() { return { messageId: 'message-1', success: true as const }; },
@@ -137,6 +164,31 @@ describe('API routes', () => {
       participants: [{ id: 'member-1', trip_id: 'trip-1', name: 'One', is_admin: 0, created_at: '2026-08-31T00:00:00.000Z' }],
       expenses: [{ id: 'expense-1', trip_id: 'trip-1', paid_by: 'member-1', paid_by_name: 'One', description: 'Meal', amount: 12.34, split_type: 'equal', created_at: '2026-08-31T00:10:00.000Z' }],
     });
+  });
+
+  it('creates a pending payment through the idempotent financial route', async () => {
+    const router = createApiRouter(dependencies());
+
+    const response = await request(router, '/trips/trip-1/payments', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': 'payment-key-1' },
+      body: JSON.stringify({ payeeMembershipId: 'member-2', amount: '1.00' }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      id: 'payment-1', status: 'pending', amount: '1.00', currency: 'INR',
+    });
+  });
+
+  it('lists pending payments for recipient action', async () => {
+    const response = await request(createApiRouter(dependencies()), '/trips/trip-1/payments');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ payments: [{
+      id: 'payment-1', status: 'pending', payer_membership_id: 'member-1',
+      payee_membership_id: 'member-2', amount: '1.00', currency: 'INR',
+    }] });
   });
 
   it('maps membership authorization failures to their service status', async () => {

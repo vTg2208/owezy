@@ -38,6 +38,9 @@ describe('allocateEqual', () => {
 });
 
 describe('majorToMinor', () => {
+  it('rejects values that cannot fit the PostgreSQL bigint ledger', () => {
+    expect(() => majorToMinor('92233720368547758.08')).toThrow(/ledger range/i);
+  });
   it.each([
     ['1', 100n],
     ['0.1', 10n],

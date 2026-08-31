@@ -3,6 +3,8 @@ export interface MoneyAllocation {
   amountMinor: bigint;
 }
 
+export const MAX_LEDGER_MINOR = 9_223_372_036_854_775_807n;
+
 export function allocateEqual(totalMinor: bigint, memberIds: readonly string[]): MoneyAllocation[] {
   if (typeof totalMinor !== 'bigint' || totalMinor <= 0n) {
     throw new Error('totalMinor must be a positive bigint');
@@ -41,6 +43,15 @@ export function majorToMinor(major: string): bigint {
   if (minor <= 0n) {
     throw new Error('major must be a positive decimal');
   }
+  if (minor > MAX_LEDGER_MINOR) {
+    throw new Error('major exceeds the PostgreSQL bigint ledger range');
+  }
 
   return minor;
+}
+
+export function minorToMajor(minor: bigint): string {
+  const sign = minor < 0n ? '-' : '';
+  const absolute = minor < 0n ? -minor : minor;
+  return `${sign}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
 }

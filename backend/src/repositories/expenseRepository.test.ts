@@ -41,6 +41,9 @@ class ExpenseQueryBoundary {
       this.receiptAttachedAfterSplits = this.splitsInsertedInTransaction;
       return { rows: [], rowCount: 1 };
     }
+    if (sql.startsWith('INSERT INTO audit_events')) {
+      return { rows: [], rowCount: 1 };
+    }
     if (sql.includes('AS authorized')) return { rows: [{ authorized: true }], rowCount: 1 };
     if (sql.includes('FROM trip_memberships m') && !sql.includes('JOIN users')) {
       return { rows: [{ id: 'member-a', trip_id: 'trip-1', display_name: 'Alice', status: 'active' }], rowCount: 1 };
