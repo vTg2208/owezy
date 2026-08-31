@@ -14,6 +14,7 @@ export function useTripSnapshot(tripId: string) {
   const lastSuccess = useRef(0);
   const nextRetry = useRef(0);
   const failures = useRef(0);
+  const olderInFlight = useRef<Promise<void>>();
 
   const load = useCallback((force = false) => {
     if (inFlight.current) return inFlight.current;
@@ -62,5 +63,26 @@ export function useTripSnapshot(tripId: string) {
     };
   }, [load]);
 
-  return { snapshot, loading, error, refresh: () => load(true) };
+  const loadOlderExpenses = useCallback(() => {
+    const cursor = snapshot?.expense_next_cursor;
+    if (!cursor) return Promise.resolve();
+    if (olderInFlight.current) return olderInFlight.current;
+    const promise = api.getExpenses(tripId, cursor).then((page) => {
+      setSnapshot((current) => {
+        if (!current || current.expense_next_cursor !== cursor) return current;
+        const known = new Set(current.expenses.map((expense) => expense.id));
+        return {
+          ...current,
+          expenses: [...current.expenses, ...page.expenses.filter((expense) => !known.has(expense.id))],
+          expense_next_cursor: page.next_cursor,
+        };
+      });
+    }).finally(() => {
+      if (olderInFlight.current === promise) olderInFlight.current = undefined;
+    });
+    olderInFlight.current = promise;
+    return promise;
+  }, [snapshot?.expense_next_cursor, tripId]);
+
+  return { snapshot, loading, error, refresh: () => load(true), loadOlderExpenses };
 }

@@ -41,6 +41,8 @@ PORT=3000
 CORS_ALLOWED_ORIGINS=http://localhost:5173
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX=300
+UID_RATE_LIMIT_WINDOW_MS=900000
+UID_RATE_LIMIT_MAX=180
 SHUTDOWN_TIMEOUT_MS=10000
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/owezy
 DATABASE_SSL=false
@@ -53,7 +55,7 @@ RECEIPT_MAX_BYTES=5242880
 RECEIPT_PENDING_TTL_HOURS=24
 ```
 
-`CORS_ALLOWED_ORIGINS` is a comma-separated exact allowlist and is mandatory in production. API responses include security headers and request IDs; the default rate limit is 300 requests per 15 minutes per client. `SHUTDOWN_TIMEOUT_MS` bounds graceful HTTP shutdown before lingering connections are forced closed. `/live` reports process liveness, while `/ready` (and the backward-compatible `/health`) verifies PostgreSQL readiness.
+`CORS_ALLOWED_ORIGINS` is a comma-separated exact allowlist and is mandatory in production. API responses include security headers and request IDs; the defaults are 300 requests per 15 minutes per client IP and 180 authenticated API requests per 15 minutes per trusted Firebase UID. `SHUTDOWN_TIMEOUT_MS` bounds graceful HTTP shutdown before lingering connections are forced closed. `/live` reports process liveness, while `/ready` (and the backward-compatible `/health`) verifies PostgreSQL readiness.
 
 `DATABASE_SSL=true` always verifies the PostgreSQL server certificate. Set `DATABASE_SSL_CA` to a PEM trust root when the platform CA is not sufficient; literal `\n` sequences are expanded. Connection and query timeouts are bounded positive millisecond values (defaults: 5,000 and 10,000). `RECEIPT_STORAGE_DRIVER` is `disabled`, `local`, or `r2`. Local storage requires `RECEIPT_STORAGE_ROOT`; paths are confined under that root and publication uses an exclusive temporary file plus atomic rename. R2 requires `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`; incomplete configuration stops startup. The default upload limit is 5 MiB.
 
@@ -121,6 +123,15 @@ SELECT id, storage_key
 ```
 
 Never delete metadata before its corresponding object and never use a storage key as an unrestricted filesystem path.
+
+Run the bounded, read-only reconciliation regularly and page with the returned cursors when either side reaches the limit:
+
+```bash
+npm run receipts:reconcile -- --limit=500
+npm run receipts:reconcile -- --limit=500 --metadata-after=<uuid> --object-cursor=<opaque-token>
+```
+
+It reports metadata rows whose objects are missing and stored objects with no PostgreSQL row. Exit code `2` means drift was found; investigate before deleting or recreating anything.
 
 The local driver is intended only for development or one instance with a durable mounted disk. Production uses Cloudflare R2 so receipt bytes survive restarts and every backend instance sees the same objects. Following Cloudflare’s S3-compatible configuration, the adapter uses AWS SDK v3 with the configured endpoint and `region=auto`.
 

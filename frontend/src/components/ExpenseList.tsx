@@ -11,10 +11,12 @@ interface ExpenseListProps {
   currentUserId: string;
   ownerId: string;
   onChanged: () => void | Promise<void>;
+  nextCursor?: string;
+  onLoadOlder?: () => Promise<void>;
 }
 
 export default function ExpenseList({
-  tripId, expenses, participants, currentUserId, ownerId, onChanged,
+  tripId, expenses, participants, currentUserId, ownerId, onChanged, nextCursor, onLoadOlder,
 }: ExpenseListProps) {
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
   const [editing, setEditing] = useState<string>();
@@ -22,6 +24,7 @@ export default function ExpenseList({
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [error, setError] = useState('');
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const receiptUrls = useRef<ReceiptObjectUrlLifecycle>();
   const receiptTrigger = useRef<HTMLButtonElement | null>(null);
   const closeButton = useRef<HTMLButtonElement | null>(null);
@@ -123,6 +126,17 @@ export default function ExpenseList({
           </article>
         );
       })}
+      {nextCursor && onLoadOlder && (
+        <button type="button" disabled={loadingOlder} onClick={() => {
+          setLoadingOlder(true);
+          setError('');
+          void onLoadOlder().catch((failure) => {
+            setError(failure instanceof Error ? failure.message : 'Older expenses could not be loaded.');
+          }).finally(() => setLoadingOlder(false));
+        }} className="button button-secondary w-full">
+          {loadingOlder ? 'Loading…' : 'Load older expenses'}
+        </button>
+      )}
       {viewingReceipt && (
         <div role="dialog" aria-modal="true" aria-label="Receipt preview" className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeReceipt(); }}>
           <div className="relative max-w-4xl max-h-[90vh]">

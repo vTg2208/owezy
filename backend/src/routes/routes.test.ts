@@ -94,6 +94,7 @@ describe('API routes', () => {
             expenses: [{ id: 'expense-1', tripId: 'trip-1', paidBy: 'member-1', paidByName: 'One', description: 'Meal', amountMinor: 1234n, splitType: 'equal' as const, createdAt: new Date('2026-08-31T00:10:00.000Z') }],
           };
         },
+        async getExpenses() { return { expenses: [], nextCursor: undefined }; },
         async setLocked() { return { success: true as const }; },
         async removeMember() { return { success: true as const }; },
       },
@@ -178,6 +179,30 @@ describe('API routes', () => {
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({
       id: 'payment-1', status: 'pending', amount: '1.00', currency: 'INR',
+    });
+  });
+
+  it('returns a cursor-paginated older expense page', async () => {
+    const base = dependencies();
+    const getExpenses = async (_uid: string, _tripId: string, cursor?: string) => {
+      expect(cursor).toBe('cursor-1');
+      return {
+        expenses: [{
+          id: 'expense-2', tripId: 'trip-1', paidBy: 'member-1', paidByName: 'One',
+          description: 'Cab', amountMinor: 505n, splitType: 'equal' as const,
+          currency: 'INR', createdAt: new Date('2026-08-30T00:00:00.000Z'),
+        }],
+        nextCursor: 'cursor-2',
+      };
+    };
+    const response = await request(createApiRouter(dependencies({
+      tripService: { ...base.tripService, getExpenses },
+    })), '/trips/trip-1/expenses?cursor=cursor-1');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      expenses: [{ id: 'expense-2', amount: 5.05, currency: 'INR' }],
+      next_cursor: 'cursor-2',
     });
   });
 

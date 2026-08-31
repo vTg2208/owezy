@@ -23,7 +23,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
 
 export default function TripDashboard({ tripId }: { tripId: string }) {
   const navigate = useNavigate();
-  const { snapshot, loading, error, refresh } = useTripSnapshot(tripId);
+  const { snapshot, loading, error, refresh, loadOlderExpenses } = useTripSnapshot(tripId);
   const [activeTab, setActiveTab] = useState<Tab>('expenses');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [actionError, setActionError] = useState('');
@@ -106,7 +106,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
           </div>
           <div className="p-5">
             <div id="panel-expenses" role="tabpanel" aria-labelledby="tab-expenses" hidden={activeTab !== 'expenses'}>
-              <ExpenseList tripId={tripId} expenses={expenses} participants={participants} currentUserId={currentMemberId} ownerId={trip.admin_id} onChanged={refreshAll} />
+              <ExpenseList tripId={tripId} expenses={expenses} participants={participants} currentUserId={currentMemberId} ownerId={trip.admin_id} onChanged={refreshAll} nextCursor={snapshot.expense_next_cursor} onLoadOlder={loadOlderExpenses} />
             </div>
             <div id="panel-balances" role="tabpanel" aria-labelledby="tab-balances" hidden={activeTab !== 'balances'}>
               <BalanceSheet balances={balances} currentUserId={currentMemberId} />

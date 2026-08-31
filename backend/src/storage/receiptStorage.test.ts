@@ -159,4 +159,12 @@ describe('receipt storage configuration', () => {
       RECEIPT_MAX_BYTES: '0',
     })).toThrow('RECEIPT_MAX_BYTES must be a positive integer');
   });
+
+  it('rejects single-instance local receipt storage in production', () => {
+    expect(() => getReceiptStorageConfig({
+      NODE_ENV: 'production',
+      RECEIPT_STORAGE_DRIVER: 'local',
+      RECEIPT_STORAGE_ROOT: 'receipts',
+    })).toThrow(/local receipt storage is not allowed in production/i);
+  });
 });

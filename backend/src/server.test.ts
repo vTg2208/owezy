@@ -87,6 +87,30 @@ describe('server lifecycle', () => {
     }
   });
 
+  it('rate limits authenticated API traffic independently by trusted uid', async () => {
+    const app = createApp({
+      database: { check: async () => undefined },
+      rateLimit: { windowMs: 60_000, max: 100 },
+      uidRateLimit: { windowMs: 60_000, max: 1 },
+      authenticate: (request, _response, next) => {
+        const uid = request.get('x-test-uid') || 'anonymous';
+        Object.assign(request, { principal: { uid, email: `${uid}@example.com`, name: uid, emailVerified: true, provider: 'test' } });
+        next();
+      },
+    });
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      expect((await fetch(`http://127.0.0.1:${port}/api/not-a-route`, { headers: { 'x-test-uid': 'one' } })).status).toBe(404);
+      const limited = await fetch(`http://127.0.0.1:${port}/api/not-a-route`, { headers: { 'x-test-uid': 'one' } });
+      expect(limited.status).toBe(429);
+      expect((await fetch(`http://127.0.0.1:${port}/api/not-a-route`, { headers: { 'x-test-uid': 'two' } })).status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it('forces stalled connections closed at the shutdown deadline', async () => {
     const events: string[] = [];
     const shutdown = createGracefulShutdown({

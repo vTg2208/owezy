@@ -10,6 +10,9 @@ class FakeS3Client {
     if (command.constructor.name === 'GetObjectCommand') {
       return { Body: { transformToByteArray: async () => this.body } };
     }
+    if (command.constructor.name === 'ListObjectsV2Command') {
+      return { Contents: [{ Key: 'abc.png' }], NextContinuationToken: 'next' };
+    }
     return {};
   }
 }
@@ -23,6 +26,8 @@ describe('R2ReceiptStorage', () => {
       .toEqual({ storageKey: 'abc.png' });
     await expect(storage.read('abc.png')).resolves.toEqual(Buffer.from('stored-bytes'));
     await storage.remove('abc.png');
+    await expect(storage.exists('abc.png')).resolves.toBe(true);
+    await expect(storage.list(undefined, 10)).resolves.toEqual({ keys: ['abc.png'], nextCursor: 'next' });
 
     expect(client.commands.map((command) => ({
       name: command.constructor.name, ...command.input,
@@ -30,6 +35,8 @@ describe('R2ReceiptStorage', () => {
       { name: 'PutObjectCommand', Bucket: 'receipts', Key: 'abc.png', Body: Buffer.from('png'), ContentType: 'image/png' },
       { name: 'GetObjectCommand', Bucket: 'receipts', Key: 'abc.png' },
       { name: 'DeleteObjectCommand', Bucket: 'receipts', Key: 'abc.png' },
+      { name: 'HeadObjectCommand', Bucket: 'receipts', Key: 'abc.png' },
+      { name: 'ListObjectsV2Command', Bucket: 'receipts', MaxKeys: 10 },
     ]);
   });
 

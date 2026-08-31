@@ -5,6 +5,8 @@ import {
   MembershipRole,
   MembershipStatus,
   TripDetails,
+  TripExpensePage,
+  TripExpenseSummary,
   TripRecord,
   TripRepository,
 } from '../services/tripService';
@@ -38,6 +40,52 @@ function mapMembership(row: Record<string, any>, firebaseUid?: string | null, pr
     role: row[`${prefix}role`] as MembershipRole,
     status: row[`${prefix}status`] as MembershipStatus,
     createdAt: row[`${prefix}created_at`],
+  };
+}
+
+const EXPENSE_PAGE_SIZE = 50;
+
+function mapExpense(row: Record<string, any>): TripExpenseSummary {
+  return {
+    id: row.id,
+    tripId: row.trip_id,
+    paidBy: row.paid_by_membership_id,
+    paidByName: row.paid_by_name,
+    description: row.description,
+    amountMinor: BigInt(row.total_minor),
+    splitType: row.split_type,
+    ...(row.expense_key ? { expenseKey: row.expense_key } : {}),
+    ...(row.version !== undefined ? { version: Number(row.version) } : {}),
+    ...(row.status ? { status: row.status } : {}),
+    ...(row.currency ? { currency: row.currency } : {}),
+    ...(row.receipt_id ? {
+      receiptUrl: `/api/trips/${encodeURIComponent(row.trip_id)}/receipts/${encodeURIComponent(row.receipt_id)}`,
+    } : {}),
+    createdAt: row.created_at,
+  };
+}
+
+function encodeExpenseCursor(row: Record<string, any>): string {
+  return Buffer.from(JSON.stringify([new Date(row.created_at).toISOString(), row.id])).toString('base64url');
+}
+
+function decodeExpenseCursor(cursor: string): [Date, string] {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== 'string' || typeof value[1] !== 'string') throw new Error();
+    const createdAt = new Date(value[0]);
+    if (Number.isNaN(createdAt.getTime()) || !value[1]) throw new Error();
+    return [createdAt, value[1]];
+  } catch {
+    throw new ServiceError(400, 'Invalid expense cursor');
+  }
+}
+
+function expensePage(rows: Array<Record<string, any>>): TripExpensePage {
+  const visible = rows.slice(0, EXPENSE_PAGE_SIZE);
+  return {
+    expenses: visible.map(mapExpense),
+    ...(rows.length > EXPENSE_PAGE_SIZE ? { nextCursor: encodeExpenseCursor(visible[visible.length - 1]) } : {}),
   };
 }
 
@@ -220,35 +268,51 @@ export class PostgresTripRepository implements TripRepository {
               AND receipt.trip_id = e.trip_id
               AND receipt.status = 'attached'
             WHERE e.trip_id = $1 AND e.status = 'active'
-            ORDER BY e.created_at DESC, e.id DESC`,
-          [tripId],
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT $2`,
+          [tripId, EXPENSE_PAGE_SIZE + 1],
         ),
       ]);
 
+      const firstExpensePage = expensePage(expensesResult.rows);
       return {
         trip: mapTrip(authorization.rows[0]),
         participants: membersResult.rows.map((row) => mapMembership(row)),
-        expenses: expensesResult.rows.map((row) => ({
-          id: row.id,
-          tripId: row.trip_id,
-          paidBy: row.paid_by_membership_id,
-          paidByName: row.paid_by_name,
-          description: row.description,
-          amountMinor: BigInt(row.total_minor),
-          splitType: row.split_type,
-          ...(row.expense_key ? { expenseKey: row.expense_key } : {}),
-          ...(row.version !== undefined ? { version: Number(row.version) } : {}),
-          ...(row.status ? { status: row.status } : {}),
-          ...(row.currency ? { currency: row.currency } : {}),
-          ...(row.receipt_id ? {
-            receiptUrl: `/api/trips/${encodeURIComponent(row.trip_id)}/receipts/${encodeURIComponent(row.receipt_id)}`,
-          } : {}),
-          createdAt: row.created_at,
-        })),
+        expenses: firstExpensePage.expenses,
+        ...(firstExpensePage.nextCursor ? { expenseNextCursor: firstExpensePage.nextCursor } : {}),
         ...(authorization.rows[0].current_membership_id
           ? { currentMembershipId: authorization.rows[0].current_membership_id }
           : {}),
       };
+    });
+  }
+
+  getExpensePageForMember(firebaseUid: string, tripId: string, cursor?: string): Promise<TripExpensePage | null> {
+    return this.transaction(async (database) => {
+      const membership = await database.query(
+        `SELECT 1
+           FROM trip_memberships m
+           JOIN users u ON u.id = m.user_id
+          WHERE m.trip_id = $1 AND u.firebase_uid = $2 AND m.status = 'active'`,
+        [tripId, firebaseUid],
+      );
+      if (!membership.rows[0]) return null;
+      const [cursorCreatedAt, cursorId] = cursor ? decodeExpenseCursor(cursor) : [null, null];
+      const result = await database.query(
+        `SELECT e.id, e.trip_id, e.paid_by_membership_id, payer.display_name AS paid_by_name,
+                e.description, e.total_minor, e.currency, e.split_type, e.expense_key,
+                e.version, e.status, receipt.id AS receipt_id, e.created_at
+           FROM expenses e
+           JOIN trip_memberships payer ON payer.id = e.paid_by_membership_id
+           LEFT JOIN receipts receipt
+             ON receipt.expense_id = e.id AND receipt.trip_id = e.trip_id AND receipt.status = 'attached'
+          WHERE e.trip_id = $1 AND e.status = 'active'
+            AND ($2::timestamptz IS NULL OR (e.created_at, e.id) < ($2::timestamptz, $3::uuid))
+          ORDER BY e.created_at DESC, e.id DESC
+          LIMIT $4`,
+        [tripId, cursorCreatedAt, cursorId, EXPENSE_PAGE_SIZE + 1],
+      );
+      return expensePage(result.rows);
     });
   }
 

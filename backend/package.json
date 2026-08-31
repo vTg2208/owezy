@@ -9,6 +9,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "migrate:mongo": "tsx src/scripts/migrate-mongo-to-postgres.ts",
     "receipts:cleanup": "tsx src/scripts/cleanup-receipts.ts",
+    "receipts:reconcile": "tsx src/scripts/reconcile-receipts.ts",
     "postinstall": "npm run build",
     "start": "node dist/server.js",
     "test": "vitest run src"

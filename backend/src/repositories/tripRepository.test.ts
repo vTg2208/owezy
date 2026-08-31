@@ -79,6 +79,7 @@ describe('PostgresTripRepository', () => {
   it('returns an authenticated application receipt URL instead of a storage key', async () => {
     let receiptMetadataQueried = false;
     let activeExpensesOnly = false;
+    let boundedExpensePage = false;
     const database = {
       async query(text: string) {
         const sql = text.replace(/\s+/g, ' ').trim();
@@ -92,6 +93,7 @@ describe('PostgresTripRepository', () => {
         if (sql.includes('FROM expenses e')) {
           receiptMetadataQueried = sql.includes('LEFT JOIN receipts');
           activeExpensesOnly = sql.includes("e.status = 'active'");
+          boundedExpensePage = sql.includes('LIMIT $2');
           return { rows: [{
             id: 'expense-1', trip_id: 'trip-1', paid_by_membership_id: 'owner-1',
             paid_by_name: 'Owner', description: 'Meal', total_minor: '1000', split_type: 'equal',
@@ -108,6 +110,7 @@ describe('PostgresTripRepository', () => {
     expect(details?.expenses[0].receiptUrl).toBe('/api/trips/trip-1/receipts/receipt-1');
     expect(receiptMetadataQueried).toBe(true);
     expect(activeExpensesOnly).toBe(true);
+    expect(boundedExpensePage).toBe(true);
   });
 
   it('locks a trip only when the Firebase user is still its active owner', async () => {

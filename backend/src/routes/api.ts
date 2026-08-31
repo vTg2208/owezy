@@ -11,7 +11,7 @@ import { IdempotencyService } from '../services/idempotencyService';
 import { InviteService } from '../services/inviteService';
 import { MessageService } from '../services/messageService';
 import { ReceiptService } from '../services/receiptService';
-import { TripService } from '../services/tripService';
+import { TripService, TripExpenseSummary } from '../services/tripService';
 import { PaymentService, PaymentRecord } from '../services/paymentService';
 import { minorToMajor } from '../domain/money';
 import type { QueryExecutor } from '../repositories/database';
@@ -21,7 +21,7 @@ import {
 import { createReceiptStorage } from '../storage/createReceiptStorage';
 
 export interface ApiRoutesDependencies {
-  tripService: Pick<TripService, 'createTrip' | 'joinTrip' | 'getTrip' | 'setLocked' | 'removeMember'>;
+  tripService: Pick<TripService, 'createTrip' | 'joinTrip' | 'getTrip' | 'getExpenses' | 'setLocked' | 'removeMember'>;
   expenseService: Pick<ExpenseService, 'createExpense' | 'getBalances' | 'correctExpense' | 'voidExpense'>;
   paymentService: Pick<PaymentService, 'create' | 'confirm' | 'reject' | 'cancel'>;
   inviteService: Pick<InviteService, 'create' | 'revoke' | 'accept'>;
@@ -67,6 +67,26 @@ function paymentResponse(payment: PaymentRecord) {
     ...(payment.amountMinor !== undefined ? { amount: minorToMajor(payment.amountMinor) } : {}),
     ...(payment.currency ? { currency: payment.currency } : {}),
     ...(payment.note ? { note: payment.note } : {}),
+  };
+}
+
+function expenseResponse(expense: TripExpenseSummary, fallbackCurrency: string, versioned: boolean) {
+  return {
+    id: expense.id,
+    trip_id: expense.tripId,
+    paid_by: expense.paidBy,
+    paid_by_name: expense.paidByName,
+    description: expense.description,
+    amount: minorToLegacyNumber(expense.amountMinor, 'Expense amount'),
+    split_type: expense.splitType,
+    receipt_url: expense.receiptUrl,
+    created_at: expense.createdAt,
+    ...(versioned ? {
+      expense_key: expense.expenseKey ?? expense.id,
+      version: expense.version ?? 1,
+      status: expense.status ?? 'active',
+      currency: expense.currency ?? fallbackCurrency,
+    } : {}),
   };
 }
 
@@ -155,23 +175,10 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
           is_admin: membership.role === 'owner' ? 1 : 0,
           created_at: membership.createdAt,
         })),
-        expenses: details.expenses.map((expense) => ({
-          id: expense.id,
-          trip_id: expense.tripId,
-          paid_by: expense.paidBy,
-          paid_by_name: expense.paidByName,
-          description: expense.description,
-          amount: minorToLegacyNumber(expense.amountMinor, 'Expense amount'),
-          split_type: expense.splitType,
-          receipt_url: expense.receiptUrl,
-          created_at: expense.createdAt,
-          ...(versioned ? {
-            expense_key: expense.expenseKey ?? expense.id,
-            version: expense.version ?? 1,
-            status: expense.status ?? 'active',
-            currency: expense.currency ?? details.trip.currency ?? 'INR',
-          } : {}),
-        })),
+        expenses: details.expenses.map((expense) => expenseResponse(
+          expense, details.trip.currency ?? 'INR', versioned,
+        )),
+        ...(versioned && details.expenseNextCursor ? { expense_next_cursor: details.expenseNextCursor } : {}),
       };
       if (!versioned) {
         response.json(snapshot);
@@ -183,6 +190,21 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
         current_member_id: details.currentMembershipId
           ?? details.participants.find((member) => member.firebaseUid === request.userId)?.id,
         ...balanceReport,
+      });
+    } catch (error) {
+      handleError(error, response, next);
+    }
+  });
+
+  router.get('/trips/:tripId/expenses', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
+    try {
+      const page = await tripService.getExpenses(
+        request.userId!, request.params.tripId,
+        typeof request.query.cursor === 'string' ? request.query.cursor : undefined,
+      );
+      response.json({
+        expenses: page.expenses.map((expense) => expenseResponse(expense, expense.currency ?? 'INR', true)),
+        ...(page.nextCursor ? { next_cursor: page.nextCursor } : {}),
       });
     } catch (error) {
       handleError(error, response, next);

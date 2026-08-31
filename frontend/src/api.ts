@@ -130,6 +130,9 @@ export const api = {
     tripId: string; tripName: string; member: { id: string; name: string; isAdmin: boolean };
   }>('/trips/join', { method: 'POST', json: { roomCode, memberName } }),
   getTrip: (tripId: string, signal?: AbortSignal) => request<TripSnapshot>(`/trips/${tripId}`, { signal }),
+  getExpenses: (tripId: string, cursor: string, signal?: AbortSignal) => request<{
+    expenses: TripSnapshot['expenses']; next_cursor?: string;
+  }>(`/trips/${tripId}/expenses?cursor=${encodeURIComponent(cursor)}`, { signal }),
   lockRoom: (tripId: string) => request<{ success: true }>(`/trips/${tripId}/lock`, { method: 'POST' }),
   unlockRoom: (tripId: string) => request<{ success: true }>(`/trips/${tripId}/unlock`, { method: 'POST' }),
   removeParticipant: (tripId: string, memberId: string) => request<{ success: true }>(

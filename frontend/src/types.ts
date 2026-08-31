@@ -99,6 +99,7 @@ export interface TripSnapshot {
   trip: Trip;
   participants: Participant[];
   expenses: Expense[];
+  expense_next_cursor?: string;
   current_member_id: string;
   balances: Balance[];
   settlements: Settlement[];

@@ -1,6 +1,8 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import type { ReceiptStorage, SupportedReceiptContentType } from './receiptStorage';
@@ -60,5 +62,28 @@ export class R2ReceiptStorage implements ReceiptStorage {
       Bucket: this.bucket,
       Key: receiptKey(storageKey),
     }));
+  }
+
+  async exists(storageKey: string): Promise<boolean> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: receiptKey(storageKey) }));
+      return true;
+    } catch (error) {
+      const failure = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (failure.name === 'NotFound' || failure.name === 'NoSuchKey' || failure.$metadata?.httpStatusCode === 404) return false;
+      throw error;
+    }
+  }
+
+  async list(cursor: string | undefined, limit: number): Promise<{ keys: string[]; nextCursor?: string }> {
+    const result = await this.client.send(new ListObjectsV2Command({
+      Bucket: this.bucket,
+      MaxKeys: limit,
+      ...(cursor ? { ContinuationToken: cursor } : {}),
+    })) as { Contents?: Array<{ Key?: string }>; NextContinuationToken?: string };
+    return {
+      keys: (result.Contents ?? []).flatMap((object) => object.Key ? [object.Key] : []),
+      ...(result.NextContinuationToken ? { nextCursor: result.NextContinuationToken } : {}),
+    };
   }
 }

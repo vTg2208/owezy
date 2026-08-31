@@ -30,6 +30,7 @@ Railway backend:
 | `DATABASE_CONNECTION_TIMEOUT_MS` | `5000` |
 | `DATABASE_QUERY_TIMEOUT_MS` | `10000` |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` |
+| `UID_RATE_LIMIT_WINDOW_MS`, `UID_RATE_LIMIT_MAX` | `900000` and `180`; tune from observed authenticated traffic |
 
 Vercel frontend:
 
@@ -79,7 +80,7 @@ Perform and record a restore drill quarterly. Record backup age (RPO), restore d
 
 R2 durability does not protect against intentional or accidental deletion. Use bucket-scoped credentials with only the required object permissions, restrict credential access to the backend/cleanup services, and keep a second independently credentialed copy if receipts have a regulatory retention requirement. Do not add a bucket lifecycle delete rule for attached receipt prefixes. The application cleanup command is the authority for expired pending uploads because it deletes the object before its metadata.
 
-Quarterly, sample PostgreSQL `receipts` rows and verify object size/checksum from R2. Rotate R2 and Firebase Admin credentials at least every 90 days or immediately after exposure: create the replacement, deploy it, verify reads/writes, then revoke the old credential.
+Run `node dist/scripts/reconcile-receipts.js --limit=500` regularly and page through `nextMetadataAfter`/`nextObjectCursor`; exit code `2` means missing or orphaned objects were found and requires investigation, never automatic deletion. Quarterly, sample PostgreSQL `receipts` rows and verify object size/checksum from R2. Rotate R2 and Firebase Admin credentials at least every 90 days or immediately after exposure: create the replacement, deploy it, verify reads/writes, then revoke the old credential.
 
 ## Incident and rollback
 
@@ -88,3 +89,12 @@ Quarterly, sample PostgreSQL `receipts` rows and verify object size/checksum fro
 - R2 outage: keep metadata intact, pause receipt cleanup, and retry object operations after service recovery.
 - Credential leak: rotate the affected key, inspect structured request logs/audit events, revoke active sessions when needed, and document the exposure window.
 - Readiness failure: inspect the request ID in structured backend logs, PostgreSQL reachability, migration state, and configuration validation before reopening traffic.
+
+## Platform references
+
+- [Railway PostgreSQL backup, PITR, logical dump, and restore guidance](https://docs.railway.com/guides/postgres-backups-restores)
+- [Railway Infrastructure-as-Code CLI workflow](https://docs.railway.com/cli)
+- [Vercel monorepo root-directory configuration](https://vercel.com/docs/monorepos)
+- [Vercel rewrite configuration](https://vercel.com/docs/routing/rewrites)
+- [Cloudflare R2 durability and deletion caveats](https://developers.cloudflare.com/r2/reference/durability/)
+- [Cloudflare R2 consistency guarantees](https://developers.cloudflare.com/r2/reference/consistency/)

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { access, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 export const DEFAULT_RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
@@ -15,6 +15,8 @@ export interface ReceiptStorage {
   ): Promise<{ storageKey: string }>;
   read(storageKey: string): Promise<Buffer>;
   remove(storageKey: string): Promise<void>;
+  exists?(storageKey: string): Promise<boolean>;
+  list?(cursor: string | undefined, limit: number): Promise<{ keys: string[]; nextCursor?: string }>;
 }
 
 export interface ReceiptStorageConfig {
@@ -61,6 +63,9 @@ export function getReceiptStorageConfig(
   }
   if (driver === 'local' && !configuredRoot) {
     throw new Error('RECEIPT_STORAGE_ROOT is required when RECEIPT_STORAGE_DRIVER=local');
+  }
+  if (driver === 'local' && environment.NODE_ENV === 'production') {
+    throw new Error('Local receipt storage is not allowed in production; configure R2');
   }
   let r2: ReceiptStorageConfig['r2'];
   if (driver === 'r2') {
@@ -151,6 +156,23 @@ export class LocalReceiptStorage implements ReceiptStorage {
 
   async remove(storageKey: string): Promise<void> {
     await rm(this.objectPath(storageKey), { force: true });
+  }
+
+  async exists(storageKey: string): Promise<boolean> {
+    try { await access(this.objectPath(storageKey)); return true; }
+    catch { return false; }
+  }
+
+  async list(cursor: string | undefined, limit: number): Promise<{ keys: string[]; nextCursor?: string }> {
+    let names: string[];
+    try { names = (await readdir(this.root)).filter((name) => !name.startsWith('.')).sort(); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { keys: [] };
+      throw error;
+    }
+    const remaining = cursor ? names.filter((name) => name > cursor) : names;
+    const keys = remaining.slice(0, limit);
+    return { keys, ...(remaining.length > keys.length ? { nextCursor: keys[keys.length - 1] } : {}) };
   }
 
   private objectPath(storageKey: string): string {

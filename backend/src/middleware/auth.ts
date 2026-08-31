@@ -47,6 +47,10 @@ export function createAuthenticateToken(
   verifyToken: VerifyToken = (token) => auth.verifyIdToken(token),
 ) {
   return async (request: AuthRequest, response: Response, next: NextFunction) => {
+    if (request.principal) {
+      next();
+      return;
+    }
     const token = bearerToken(request);
     if (!token) {
       response.status(401).json({ error: 'Bearer access token required' });

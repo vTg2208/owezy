@@ -78,6 +78,10 @@ class MemoryTripRepository implements TripRepository {
     };
   }
 
+  async getExpensePageForMember() {
+    return { expenses: [] };
+  }
+
   async setTripLockedForOwner(
     firebaseUid: string,
     tripId: string,

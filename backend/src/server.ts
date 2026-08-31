@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import type { Server } from 'node:http';
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -13,11 +13,13 @@ import {
   createRequestContext,
   StructuredLogger,
 } from './middleware/requestContext';
+import { authenticateToken, AuthRequest } from './middleware/auth';
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
 const DEFAULT_RATE_LIMIT_MAX = 300;
+const DEFAULT_UID_RATE_LIMIT_MAX = 180;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface CloseableServer {
@@ -46,6 +48,8 @@ export interface AppDependencies {
   allowedOrigins?: readonly string[];
   requestId?: () => string;
   rateLimit?: { windowMs: number; max: number };
+  uidRateLimit?: { windowMs: number; max: number };
+  authenticate?: RequestHandler;
   logger?: StructuredLogger;
 }
 
@@ -121,6 +125,10 @@ export function createApp(dependencies: AppDependencies = {}) {
     windowMs: positiveInteger(process.env.RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS, 'RATE_LIMIT_WINDOW_MS'),
     max: positiveInteger(process.env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX, 'RATE_LIMIT_MAX'),
   };
+  const uidLimiter = dependencies.uidRateLimit ?? {
+    windowMs: positiveInteger(process.env.UID_RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS, 'UID_RATE_LIMIT_WINDOW_MS'),
+    max: positiveInteger(process.env.UID_RATE_LIMIT_MAX, DEFAULT_UID_RATE_LIMIT_MAX, 'UID_RATE_LIMIT_MAX'),
+  };
   const logger = dependencies.logger ?? defaultLogger();
 
   app.disable('x-powered-by');
@@ -145,6 +153,14 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
   app.use(createAccessLogger(logger));
+  app.use('/api', dependencies.authenticate ?? authenticateToken, rateLimit({
+    windowMs: uidLimiter.windowMs,
+    limit: uidLimiter.max,
+    keyGenerator: (request) => (request as AuthRequest).principal?.uid || 'missing-principal',
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_request, response) => response.status(429).json({ error: 'Too many requests for this account' }),
+  }));
 
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1', apiRoutes);

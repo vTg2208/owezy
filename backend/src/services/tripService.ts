@@ -46,6 +46,12 @@ export interface TripDetails {
   participants: Membership[];
   expenses: TripExpenseSummary[];
   currentMembershipId?: string;
+  expenseNextCursor?: string;
+}
+
+export interface TripExpensePage {
+  expenses: TripExpenseSummary[];
+  nextCursor?: string;
 }
 
 export type JoinResult =
@@ -68,6 +74,7 @@ export interface TripRepository {
   ): Promise<JoinResult>;
   findActiveMembership(firebaseUid: string, tripId: string): Promise<Membership | null>;
   getTripDetailsForMember(firebaseUid: string, tripId: string): Promise<TripDetails | null>;
+  getExpensePageForMember(firebaseUid: string, tripId: string, cursor?: string): Promise<TripExpensePage | null>;
   setTripLockedForOwner(
     firebaseUid: string,
     tripId: string,
@@ -177,6 +184,12 @@ export class TripService {
     const details = await this.repository.getTripDetailsForMember(firebaseUid, tripId);
     if (!details) throw new ServiceError(403, 'You are not a member of this trip');
     return details;
+  }
+
+  async getExpenses(firebaseUid: string, tripId: string, cursor?: string): Promise<TripExpensePage> {
+    const page = await this.repository.getExpensePageForMember(firebaseUid, tripId, cursor);
+    if (!page) throw new ServiceError(403, 'You are not a member of this trip');
+    return page;
   }
 
   async setLocked(firebaseUid: string, tripId: string, locked: boolean): Promise<{ success: true }> {
