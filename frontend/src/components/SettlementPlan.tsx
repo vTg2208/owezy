@@ -29,14 +29,14 @@ export default function SettlementPlan({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-10">
       {error && <p role="alert" className="text-red-700">{error}</p>}
       <section aria-labelledby="suggested-settlements">
-        <h3 id="suggested-settlements" className="text-lg font-semibold mb-3">Suggested settlements</h3>
+        <h2 id="suggested-settlements" className="mb-3 text-2xl">Suggested settlements</h2>
         {relevant.length === 0 ? <p className="text-green-700">You’re all settled.</p> : (
-          <div className="space-y-3">
+          <div className="border-t border-gray-300">
             {relevant.map((item) => (
-              <article key={`${item.from}-${item.to}`} className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-4">
+              <article key={`${item.from}-${item.to}`} className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-300 py-4">
                 <p><strong>{item.from === currentUserId ? 'You' : item.fromName}</strong> pay <strong>{item.to === currentUserId ? 'you' : item.toName}</strong></p>
                 <p className="text-xl font-bold">₹{item.amount.toFixed(2)}</p>
                 {item.from === currentUserId && (
@@ -46,7 +46,7 @@ export default function SettlementPlan({
                     onClick={() => void mutate(`create-${item.to}`, () => api.createPayment(
                       tripId, item.to, item.amount.toFixed(2), 'Settlement',
                     ))}
-                    className="px-4 py-2 bg-indigo-700 text-white rounded-lg disabled:opacity-50"
+                    className="button button-primary"
                   >{busy === `create-${item.to}` ? 'Recording…' : 'Record payment'}</button>
                 )}
               </article>
@@ -55,11 +55,11 @@ export default function SettlementPlan({
         )}
       </section>
       <section aria-labelledby="payment-history">
-        <h3 id="payment-history" className="text-lg font-semibold mb-3">Payment requests</h3>
+        <h2 id="payment-history" className="mb-3 text-2xl">Payment requests</h2>
         {myPayments.length === 0 ? <p className="text-gray-600">No payments recorded yet.</p> : (
-          <div className="space-y-3">
+          <div className="border-t border-gray-300">
             {myPayments.map((payment) => (
-              <article key={payment.id} className="border rounded-lg p-4 flex flex-wrap justify-between gap-3">
+              <article key={payment.id} className="flex flex-wrap justify-between gap-3 border-b border-gray-300 py-4">
                 <div>
                   <p className="font-semibold">₹{payment.amount ?? '—'} {payment.currency ?? 'INR'}</p>
                   <p className="text-sm capitalize">{payment.status}</p>

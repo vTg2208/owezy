@@ -99,35 +99,35 @@ export default function ExpenseList({
     }
   };
 
-  if (expenses.length === 0) return <p className="text-center text-gray-500 py-8">No expenses yet.</p>;
+  if (expenses.length === 0) return <p className="border-t border-gray-300 py-8 text-muted">No expenses yet. Add the first one while it’s fresh.</p>;
 
   return (
-    <div className="space-y-4">
+    <div>
       {error && <p role="alert" className="text-red-700">{error}</p>}
       {expenses.map((expense) => {
         const canChange = expense.paid_by === currentUserId || ownerId === currentUserId;
         return (
-          <article key={expense.id} className="border rounded-lg p-4">
-            <div className="flex justify-between gap-3">
-              <div><h3 className="font-semibold text-lg">{expense.description}</h3><p className="text-sm text-gray-600">Paid by {expense.paid_by_name}</p></div>
-              <div className="text-right"><p className="text-2xl font-bold text-indigo-700">₹{expense.amount.toFixed(2)}</p><p className="text-xs capitalize">{expense.split_type} split · v{expense.version ?? 1}</p></div>
+          <article key={expense.id} className="expense-row">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+              <div className="min-w-0"><h3 className="text-lg">{expense.description}</h3><p className="mt-1 text-sm text-muted">Paid by {expense.paid_by_name}</p></div>
+              <div className="text-right"><p className="money text-xl text-gray-900">₹{expense.amount.toFixed(2)}</p><p className="text-xs capitalize text-muted">{expense.split_type} split · v{expense.version ?? 1}</p></div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-3">
-              {expense.receipt_url && <button type="button" onClick={(event) => void viewReceipt(expense.receipt_url!, event.currentTarget)} className="text-indigo-700 underline">View receipt</button>}
-              {canChange && <button type="button" onClick={() => beginCorrection(expense)} className="text-indigo-700 underline">Correct</button>}
-              {canChange && <button type="button" onClick={() => { setConfirmVoid(expense.id); setEditing(undefined); }} className="text-red-700 underline">Void</button>}
+            <div className="mt-3 flex flex-wrap gap-1">
+              {expense.receipt_url && <button type="button" onClick={(event) => void viewReceipt(expense.receipt_url!, event.currentTarget)} className="button button-quiet">View receipt</button>}
+              {canChange && <button type="button" onClick={() => beginCorrection(expense)} className="button button-quiet">Correct</button>}
+              {canChange && <button type="button" onClick={() => { setConfirmVoid(expense.id); setEditing(undefined); }} className="button button-quiet text-red-700">Void</button>}
             </div>
             {editing === expense.id && (
               <div className="mt-4 grid gap-3 rounded-lg bg-gray-50 p-3">
                 <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} className="block w-full border rounded px-3 py-2" /></label>
                 <label>Amount (₹)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" className="block w-full border rounded px-3 py-2" /></label>
-                <div className="flex gap-2"><button type="button" disabled={busyExpense === expense.id} onClick={() => void correct(expense)} className="px-4 py-2 bg-indigo-700 text-white rounded disabled:opacity-50">{busyExpense === expense.id ? 'Saving…' : 'Save correction'}</button><button type="button" disabled={busyExpense === expense.id} onClick={() => setEditing(undefined)}>Cancel</button></div>
+                <div className="flex gap-2"><button type="button" disabled={busyExpense === expense.id} onClick={() => void correct(expense)} className="button button-primary">{busyExpense === expense.id ? 'Saving…' : 'Save correction'}</button><button type="button" disabled={busyExpense === expense.id} onClick={() => setEditing(undefined)} className="button button-quiet">Cancel</button></div>
               </div>
             )}
             {confirmVoid === expense.id && (
               <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
                 <p>Void this expense? The historical row will remain in the audit trail.</p>
-                <div className="mt-2 flex gap-2"><button type="button" disabled={busyExpense === expense.id} onClick={() => void voidExpense(expense)} className="px-4 py-2 bg-red-700 text-white rounded disabled:opacity-50">{busyExpense === expense.id ? 'Voiding…' : 'Confirm void'}</button><button type="button" disabled={busyExpense === expense.id} onClick={() => setConfirmVoid(undefined)}>Keep expense</button></div>
+                <div className="mt-2 flex gap-2"><button type="button" disabled={busyExpense === expense.id} onClick={() => void voidExpense(expense)} className="button button-danger">{busyExpense === expense.id ? 'Voiding…' : 'Confirm void'}</button><button type="button" disabled={busyExpense === expense.id} onClick={() => setConfirmVoid(undefined)} className="button button-quiet">Keep expense</button></div>
               </div>
             )}
           </article>

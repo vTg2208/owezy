@@ -19,19 +19,11 @@ export default function BalanceSheet({ balances, currentUserId }: BalanceSheetPr
   const otherBalances = balances.filter(b => b.memberId !== currentUserId);
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-3xl space-y-8">
       {userBalance && (
         <div>
-          <h3 className="text-xs sm:text-sm font-semibold text-gray-600 mb-2">Your Balance:</h3>
-          <div
-            className={`flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 sm:p-5 rounded-lg border-2 gap-2 ${
-              userBalance.balance > 0
-                ? 'bg-green-50 border-green-300'
-                : userBalance.balance < 0
-                ? 'bg-red-50 border-red-300'
-                : 'bg-gray-50 border-gray-300'
-            }`}
-          >
+          <p className="eyebrow mb-2">Your balance</p>
+          <div className="flex flex-col justify-between gap-2 border-y border-gray-300 px-1 py-5 sm:flex-row sm:items-center">
             <span className="font-bold text-gray-800 text-base sm:text-lg">{userBalance.memberName} (You)</span>
             <div className="text-left sm:text-right">
               <div
@@ -59,19 +51,10 @@ export default function BalanceSheet({ balances, currentUserId }: BalanceSheetPr
 
       {otherBalances.length > 0 && (
         <div>
-          <h3 className="text-xs sm:text-sm font-semibold text-gray-600 mb-2">Other Members:</h3>
-          <div className="space-y-2">
+          <h3 className="mb-2 text-xl">Everyone else</h3>
+          <div className="border-t border-gray-300">
             {otherBalances.map((balance) => (
-              <div
-                key={balance.memberId}
-                className={`flex justify-between items-center p-3 sm:p-4 rounded-lg ${
-                  balance.balance > 0
-                    ? 'bg-green-50 border border-green-200'
-                    : balance.balance < 0
-                    ? 'bg-red-50 border border-red-200'
-                    : 'bg-gray-50 border border-gray-200'
-                }`}
-              >
+              <div key={balance.memberId} className="flex items-center justify-between border-b border-gray-300 px-1 py-4">
                 <span className="font-semibold text-gray-800 text-sm sm:text-base">{balance.memberName}</span>
                 <div className="text-right">
                   <div

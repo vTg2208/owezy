@@ -40,13 +40,20 @@ export default function Register() {
   };
 
   return (
-    <main className="min-h-screen grid place-items-center p-4">
-      <section className="paper-card w-full max-w-md" aria-labelledby="register-title">
-        <Link to="/" className="brand-word block text-center text-5xl no-underline">Owezy</Link>
-        <header className="my-7 text-center">
-          <p className="eyebrow">Pack your ledger</p>
-          <h1 id="register-title" className="mt-2 text-4xl">Create an account</h1>
-        </header>
+    <main className="auth-layout">
+      <aside className="auth-mood" aria-label="Sunset by the sea">
+        <div className="auth-mood-copy">
+          <h2>One trip page.<br />No awkward maths.</h2>
+          <p className="mt-3">Invite your people, add expenses as they happen, and leave the trip square.</p>
+        </div>
+      </aside>
+      <section className="auth-panel" aria-labelledby="register-title">
+        <div className="auth-form">
+          <Link to="/" className="brand-word block w-fit text-5xl no-underline">Owezy</Link>
+          <header className="my-9">
+            <h1 id="register-title" className="text-4xl">Create an account</h1>
+            <p className="mt-2 text-muted">Your next shared trip starts here.</p>
+          </header>
         {error && <p role="alert" className="notice notice-error mb-4">{error}</p>}
         <form onSubmit={handleSubmit} className="form-stack">
           <label htmlFor="name">Full name</label>
@@ -60,7 +67,8 @@ export default function Register() {
         </form>
         <div className="auth-divider my-6">or</div>
         <button type="button" onClick={() => void handleGoogle()} disabled={isLoading} className="button button-secondary w-full">Continue with Google</button>
-        <p className="mt-7 text-center text-muted">Already packed? <Link to="/login" state={location.state} className="font-bold">Log in</Link></p>
+          <p className="mt-7 text-muted">Already packed? <Link to="/login" state={location.state} className="font-bold">Log in</Link></p>
+        </div>
       </section>
     </main>
   );

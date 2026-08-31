@@ -71,10 +71,14 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen grid place-items-center p-4">
-      <section className="paper-card relative w-full max-w-lg" aria-labelledby="trip-action-title">
-        <Link to="/dashboard" className="back-link" aria-label="Back to dashboard">← Dashboard</Link>
-        <header className="mb-8 pt-8 text-center">
+    <main className="min-h-screen">
+      <div className="page-wrap">
+        <nav className="app-bar" aria-label="Trip navigation">
+          <Link to="/dashboard" className="back-link" aria-label="Back to dashboard">← Dashboard</Link>
+          <Link to="/" className="brand-word text-4xl no-underline">Owezy</Link>
+        </nav>
+      <section className="mx-auto mt-10 w-full max-w-xl border-t border-gray-300 pt-8" aria-labelledby="trip-action-title">
+        <header className="mb-8">
           <p className="eyebrow">Start a page</p>
           <h1 id="trip-action-title">Plan the next trip</h1>
           <p className="text-muted mt-2">Signed in as {user?.name}</p>
@@ -118,6 +122,7 @@ export default function Home() {
           </form>
         )}
       </section>
+      </div>
     </main>
   );
 }

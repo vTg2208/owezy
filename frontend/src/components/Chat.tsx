@@ -53,16 +53,16 @@ export default function Chat({ tripId, currentUserId }: ChatProps) {
   };
 
   return (
-    <section aria-label="Trip chat" className="flex flex-col h-[32rem]">
+    <section aria-label="Trip chat" className="mx-auto flex h-[32rem] max-w-3xl flex-col">
       {error && <p role="alert" className="mb-3 text-red-700">{error}</p>}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50 rounded-lg">
+      <div className="flex-1 space-y-3 overflow-y-auto border-y border-gray-300 bg-gray-50 p-4">
         {nextCursor && <button type="button" onClick={() => void load(nextCursor)} className="block mx-auto px-4 py-2 text-indigo-700">Load older messages</button>}
         {messages.length === 0 && <p className="text-center text-gray-500">No messages yet. Start the conversation.</p>}
         {messages.map((message) => {
           const mine = message.member_id === currentUserId;
           return (
             <article key={message.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-md px-4 py-2 rounded-2xl ${mine ? 'bg-indigo-700 text-white' : 'bg-white text-gray-900 shadow-sm'}`}>
+              <div className={`max-w-md px-4 py-2 ${mine ? 'bg-green-900 text-white' : 'border border-gray-300 bg-white'}`}>
                 {!mine && <p className="text-xs font-semibold opacity-75">{message.member_name}</p>}
                 <p className="break-words">{message.message}</p>
               </div>
@@ -74,7 +74,7 @@ export default function Chat({ tripId, currentUserId }: ChatProps) {
       <form onSubmit={send} className="mt-4 flex gap-2">
         <label htmlFor="chat-message" className="sr-only">Message</label>
         <input id="chat-message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={500} disabled={busy} className="flex-1 px-4 py-3 border rounded-lg" placeholder="Write a message" />
-        <button type="submit" disabled={!draft.trim() || busy} className="px-6 py-3 bg-indigo-700 text-white rounded-lg disabled:opacity-50">{busy ? 'Sending…' : 'Send'}</button>
+        <button type="submit" disabled={!draft.trim() || busy} className="button button-primary px-6">{busy ? 'Sending…' : 'Send'}</button>
       </form>
     </section>
   );

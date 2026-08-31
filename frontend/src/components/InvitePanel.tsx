@@ -37,12 +37,14 @@ export default function InvitePanel({ tripId }: { tripId: string }) {
   };
 
   return (
-    <section aria-labelledby="invite-heading" className="flat-section mt-4">
-      <h3 id="invite-heading">Invite a traveller</h3>
-      <p className="mb-3 text-sm text-muted">The link works only for the email address you enter.</p>
+    <details className="group">
+      <summary className="button button-secondary w-fit list-none">Invite people</summary>
+      <section aria-labelledby="invite-heading" className="mt-4 border-l-2 border-gray-300 pl-4">
+      <h3 id="invite-heading" className="text-base">Invite a traveller</h3>
+      <p className="mb-3 text-sm text-muted">Create a private link for one email address.</p>
       {error && <p role="alert" className="notice notice-error mb-3">{error}</p>}
       {message && <p role="status" className="notice notice-success mb-3">{message}</p>}
-      <form onSubmit={create} className="flex flex-col gap-2 sm:flex-row">
+      <form onSubmit={create} className="flex flex-col gap-2">
         <label htmlFor="invite-email" className="sr-only">Traveller email address</label>
         <input id="invite-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="friend@example.com" className="flex-1" />
         <button type="submit" disabled={busy} className="button button-primary">{busy ? 'Creating…' : 'Create private link'}</button>
@@ -57,6 +59,7 @@ export default function InvitePanel({ tripId }: { tripId: string }) {
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </details>
   );
 }

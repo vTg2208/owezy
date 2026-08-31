@@ -24,7 +24,7 @@ export default function AuditTrail({ tripId }: { tripId: string }) {
   if (events.length === 0) return <p className="text-muted">No recorded activity yet.</p>;
 
   return (
-    <ol className="grid list-none gap-3 p-0">
+    <ol className="mx-auto grid max-w-3xl list-none p-0">
       {events.map((event) => (
         <li key={event.id} className="border-b border-gray-300 pb-3">
           <div className="flex flex-wrap justify-between gap-2">

@@ -67,56 +67,77 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
   };
 
   return (
-    <main className="min-h-screen p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <button type="button" onClick={() => navigate('/dashboard')} className="mb-4 min-h-11 px-3 rounded-lg bg-white shadow" aria-label="Back to dashboard">← Dashboard</button>
-        <header className="trip-hero text-center mb-8">
-          <p className="text-sm uppercase tracking-widest">Trip notebook</p>
-          <h1 className="text-5xl md:text-7xl">{capitalizedName}</h1>
-          <p className="font-mono text-xl mt-2">{trip.room_code} · {trip.currency ?? 'INR'}</p>
-          <div className="flex flex-wrap justify-center gap-2 mt-5">
-            {isOwner && <button type="button" disabled={Boolean(busyAction)} onClick={() => void mutation('room', () => trip.is_locked ? api.unlockRoom(tripId) : api.lockRoom(tripId))} className="px-4 py-2 bg-amber-700 text-white rounded-lg disabled:opacity-60">{busyAction === 'room' ? (trip.is_locked ? 'Opening room\u2026' : 'Closing room\u2026') : (trip.is_locked ? 'Open room' : 'Close room')}</button>}
-            <button type="button" onClick={() => setConfirmLeave(true)} className="px-4 py-2 border border-red-300 text-red-800 rounded-lg">Leave trip</button>
-          </div>
-          <p role="status" className="mt-3 text-sm">
+    <main className="min-h-screen">
+      <div className="page-wrap">
+        <nav className="app-bar" aria-label="Trip navigation">
+          <button type="button" onClick={() => navigate('/dashboard')} className="back-link border-0 bg-transparent" aria-label="Back to dashboard">← Dashboard</button>
+          <span className="brand-word text-4xl">Owezy</span>
+        </nav>
+
+        <div className="mt-6 overflow-hidden border border-gray-300 bg-white shadow-sm">
+        <header className="trip-banner">
+          <div className="trip-banner-copy">
+            <p className="eyebrow">Trip notebook</p>
+            <h1 className="mt-2">{capitalizedName}</h1>
+            <div className="trip-meta">
+              <span className="font-mono font-semibold">Room {trip.room_code}</span>
+              <span aria-hidden="true">·</span>
+              <span>{trip.currency ?? 'INR'}</span>
+              <span className="status-chip">{trip.is_locked ? 'Room closed' : 'Room open'}</span>
+            </div>
+            <div className="trip-actions">
+              {isOwner && <button type="button" disabled={Boolean(busyAction)} onClick={() => void mutation('room', () => trip.is_locked ? api.unlockRoom(tripId) : api.lockRoom(tripId))} className="button button-secondary">{busyAction === 'room' ? (trip.is_locked ? 'Opening room…' : 'Closing room…') : (trip.is_locked ? 'Open room' : 'Close room')}</button>}
+              <button type="button" onClick={() => setConfirmLeave(true)} className="button button-quiet text-red-800">Leave trip</button>
+            </div>
+          <p role="status" className="mt-3 max-w-xl text-sm text-muted">
             {trip.is_locked
               ? 'Room closed to new travellers. Existing travellers can keep adding expenses and settling balances.'
               : 'Room open. New travellers can join by room code or private invitation.'}
           </p>
           {confirmLeave && (
-            <div className="mt-3 inline-block rounded-lg bg-red-50 border border-red-200 p-3 text-left">
+            <div className="notice notice-error mt-3 text-left">
               <p>Leave this trip? Your historical entries will remain.</p>
-              <div className="flex gap-2 mt-2"><button type="button" disabled={busyAction === 'leave'} onClick={() => void mutation('leave', async () => { await api.removeParticipant(tripId, currentMemberId); navigate('/dashboard'); })} className="px-3 py-2 bg-red-700 text-white rounded disabled:opacity-60">{busyAction === 'leave' ? 'Leaving\u2026' : 'Confirm leave'}</button><button type="button" onClick={() => setConfirmLeave(false)}>Stay</button></div>
+              <div className="mt-2 flex gap-2"><button type="button" disabled={busyAction === 'leave'} onClick={() => void mutation('leave', async () => { await api.removeParticipant(tripId, currentMemberId); navigate('/dashboard'); })} className="button button-danger">{busyAction === 'leave' ? 'Leaving…' : 'Confirm leave'}</button><button type="button" onClick={() => setConfirmLeave(false)} className="button button-quiet">Stay</button></div>
             </div>
           )}
+          </div>
+          <div className="trip-banner-image" role="img" aria-label="Palm trees and string lights beside the sea at sunset" />
         </header>
-        {(error || actionError) && <p role="alert" className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-red-800">{actionError || error}</p>}
+        {(error || actionError) && <p role="alert" className="notice notice-error m-4">{actionError || error}</p>}
 
-        <section className="bg-white rounded-2xl shadow p-5 mb-6">
+        <section className="people-rail">
           <ParticipantList participants={participants} isAdmin={isOwner} currentUserId={currentMemberId} ownerId={trip.admin_id} onRemove={(memberId) => void mutation(`remove-${memberId}`, () => api.removeParticipant(tripId, memberId))} />
           {isOwner && (trip.is_locked
-            ? <p role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">Open the room before creating a new invitation.</p>
+            ? <p role="status" className="notice text-sm">Open the room before creating a new invitation.</p>
             : <InvitePanel tripId={tripId} />)}
         </section>
-        <section className="bg-white rounded-2xl shadow p-5 mb-6">
-          <AddExpense tripId={tripId} participants={participants} onExpenseAdded={refreshAll} receiptUploadsEnabled={snapshot.capabilities?.receipt_uploads ?? false} />
-        </section>
 
-        <section className="bg-white rounded-2xl shadow overflow-hidden">
-          <div role="tablist" aria-label="Trip sections" className="flex overflow-x-auto border-b">
+        <section className="workspace">
+          <div role="tablist" aria-label="Trip sections" className="tab-rail">
             {tabs.map((tab, index) => (
               <button
                 key={tab.id} id={`tab-${tab.id}`} role="tab"
                 aria-selected={activeTab === tab.id} aria-controls={`panel-${tab.id}`}
                 tabIndex={activeTab === tab.id ? 0 : -1}
                 onClick={() => setActiveTab(tab.id)} onKeyDown={(event) => handleTabKey(event, index)}
-                className={`flex-1 min-h-12 px-4 font-semibold ${activeTab === tab.id ? 'bg-indigo-700 text-white' : 'bg-gray-50 text-gray-800'}`}
+                className="tab-button"
               >{tab.label}</button>
             ))}
           </div>
-          <div className="p-5">
+          <div className="tab-panel">
             <div id="panel-expenses" role="tabpanel" aria-labelledby="tab-expenses" hidden={activeTab !== 'expenses'}>
-              <ExpenseList tripId={tripId} expenses={expenses} participants={participants} currentUserId={currentMemberId} ownerId={trip.admin_id} onChanged={refreshAll} nextCursor={snapshot.expense_next_cursor} onLoadOlder={loadOlderExpenses} />
+              <div className="expense-workspace">
+                <div className="expense-ledger">
+                  <div className="mb-2 flex items-end justify-between gap-3">
+                    <h2 className="text-2xl">Expenses</h2>
+                    <span className="text-sm text-muted">{expenses.length} recorded</span>
+                  </div>
+                  <ExpenseList tripId={tripId} expenses={expenses} participants={participants} currentUserId={currentMemberId} ownerId={trip.admin_id} onChanged={refreshAll} nextCursor={snapshot.expense_next_cursor} onLoadOlder={loadOlderExpenses} />
+                </div>
+                <aside className="expense-composer">
+                  <AddExpense tripId={tripId} participants={participants} onExpenseAdded={refreshAll} receiptUploadsEnabled={snapshot.capabilities?.receipt_uploads ?? false} />
+                </aside>
+              </div>
             </div>
             <div id="panel-balances" role="tabpanel" aria-labelledby="tab-balances" hidden={activeTab !== 'balances'}>
               <BalanceSheet balances={balances} currentUserId={currentMemberId} />
@@ -132,6 +153,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
             </div>
           </div>
         </section>
+        </div>
       </div>
     </main>
   );

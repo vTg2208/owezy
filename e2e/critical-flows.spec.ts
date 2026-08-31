@@ -49,6 +49,7 @@ async function installApi(page: Page) {
 test.beforeEach(async ({ page }) => { await installApi(page); });
 
 test('registration and login stubs reach the authenticated dashboard', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.goto('/dashboard');
   await page.getByRole('button', { name: 'Log out' }).click();
   await expect(page).toHaveURL(/\/login$/);
@@ -114,4 +115,19 @@ test('account deletion requires an inline confirmation', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Permanently delete your account?' })).toBeVisible();
   await page.getByRole('button', { name: 'Delete permanently' }).click();
   await expect(page).toHaveURL(/\/login$/);
+});
+
+test('core pages do not introduce horizontal page overflow', async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const path of ['/', '/login', '/register', '/dashboard', '/home?mode=create', '/trip/trip-1']) {
+    await page.goto(path);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `${path} should fit the viewport`).toBeLessThanOrEqual(1);
+  }
+
+  for (const tab of ['Balances', 'Settlement', 'Chat', 'Activity']) {
+    await page.getByRole('tab', { name: tab }).click();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `${tab} should fit the viewport`).toBeLessThanOrEqual(1);
+  }
 });

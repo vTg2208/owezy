@@ -28,16 +28,21 @@ export default function Dashboard() {
 
   return (
     <main className="page-wrap">
-      <header className="shelf-hero mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <Link to="/" className="brand-word text-5xl no-underline">Owezy</Link>
-          <p className="eyebrow mt-3">Your travel shelf</p>
-          <h1 className="mt-1 text-4xl">Hello, {user?.name}</h1>
-        </div>
+      <nav className="app-bar" aria-label="Account navigation">
+        <Link to="/" className="brand-word text-4xl no-underline">Owezy</Link>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => void logout()} className="button button-secondary">Log out</button>
           <button type="button" onClick={() => setConfirmDelete(true)} className="button button-quiet text-red-800">Delete account</button>
         </div>
+      </nav>
+
+      <header className="dashboard-head">
+        <div>
+          <p className="eyebrow">Your travel shelf</p>
+          <h1 className="mt-2 text-4xl">Hello, {user?.name}</h1>
+          <p className="mt-3 max-w-xl text-muted">Pick up where your group left off, or start a fresh page for the next journey.</p>
+        </div>
+        <Link to="/home?mode=create" className="button button-primary">Create trip</Link>
       </header>
 
       {error && <p role="alert" className="notice notice-error mb-5">{error}</p>}
@@ -52,11 +57,8 @@ export default function Dashboard() {
         </section>
       )}
 
-      <section className="paper-card" aria-labelledby="my-trips-title">
-        <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-          <div><p className="eyebrow">Saved journeys</p><h2 id="my-trips-title">My trips</h2></div>
-          <Link to="/home?mode=create" className="button button-primary">Create trip</Link>
-        </div>
+      <section aria-labelledby="my-trips-title">
+        <div className="mb-5"><h2 id="my-trips-title">My trips</h2></div>
 
         {isLoading ? <p role="status" className="text-muted py-8 text-center">Loading trips…</p> : trips.length === 0 ? (
           <div className="py-10 text-center">
@@ -64,23 +66,27 @@ export default function Dashboard() {
             <Link to="/home?mode=create" className="button button-secondary">Create your first trip</Link>
           </div>
         ) : (
-          <ul className="grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="trip-list list-none p-0">
             {trips.map((trip) => (
-              <li key={trip.id} className="rounded-xl border border-gray-300 bg-white p-5">
-                <p className="eyebrow">{trip.currency ?? 'INR'} trip</p>
-                <h3 className="mt-1 text-xl">{trip.name}</h3>
-                <p className="mt-3 text-sm text-muted">Room <span className="font-mono font-bold text-gray-900">{trip.room_code}</span></p>
-                <p className="text-xs text-muted">Created {new Date(trip.created_at).toLocaleDateString()}</p>
-                <Link to={`/trip/${trip.id}`} className="button button-secondary mt-5 w-full">Open trip</Link>
+              <li key={trip.id} className="trip-row">
+                <div className="min-w-0">
+                  <p className="eyebrow">{trip.currency ?? 'INR'} trip</p>
+                  <h3 className="mt-1 text-xl">{trip.name}</h3>
+                </div>
+                <div className="text-sm text-muted">
+                  <p>Room <span className="font-mono font-bold text-gray-900">{trip.room_code}</span></p>
+                  <p className="text-xs">Created {new Date(trip.created_at).toLocaleDateString()}</p>
+                </div>
+                <Link to={`/trip/${trip.id}`} className="button button-secondary">Open trip</Link>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <nav aria-label="Trip shortcuts" className="journey-shortcuts mt-5 flex flex-wrap gap-3">
-        <Link to="/home?mode=join" className="button button-quiet">Join with room code →</Link>
-        <Link to="/home" className="button button-quiet">Accept invitation →</Link>
+      <nav aria-label="Trip shortcuts" className="journey-shortcuts">
+        <Link to="/home?mode=join" className="button button-quiet">Join with room code</Link>
+        <Link to="/home" className="button button-quiet">Accept invitation</Link>
       </nav>
     </main>
   );

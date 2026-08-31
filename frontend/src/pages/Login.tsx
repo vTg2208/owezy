@@ -32,13 +32,20 @@ export default function Login() {
   };
 
   return (
-    <main className="min-h-screen grid place-items-center p-4">
-      <section className="paper-card w-full max-w-md" aria-labelledby="login-title">
-        <Link to="/" className="brand-word block text-center text-5xl no-underline">Owezy</Link>
-        <header className="my-7 text-center">
-          <p className="eyebrow">Welcome back</p>
-          <h1 id="login-title" className="mt-2 text-4xl">Open your trips</h1>
-        </header>
+    <main className="auth-layout">
+      <aside className="auth-mood" aria-label="Sunset by the sea">
+        <div className="auth-mood-copy">
+          <h2>Keep the memories.<br />We’ll keep the maths.</h2>
+          <p className="mt-3">A calmer way to share every chai, cab, room, and last-minute detour.</p>
+        </div>
+      </aside>
+      <section className="auth-panel" aria-labelledby="login-title">
+        <div className="auth-form">
+          <Link to="/" className="brand-word block w-fit text-5xl no-underline">Owezy</Link>
+          <header className="my-9">
+            <h1 id="login-title" className="text-4xl">Welcome back</h1>
+            <p className="mt-2 text-muted">Log in to open your trips.</p>
+          </header>
 
         {params.get('verified') === 'pending' && <p role="status" className="notice notice-success mb-4">Account created. Verify the link in your email, then log in.</p>}
         {error && <p role="alert" className="notice notice-error mb-4">{error}</p>}
@@ -53,7 +60,8 @@ export default function Login() {
 
         <div className="auth-divider my-6">or</div>
         <button type="button" onClick={() => void perform(loginWithGoogle)} disabled={isLoading} className="button button-secondary w-full">Continue with Google</button>
-        <p className="mt-7 text-center text-muted">New here? <Link to="/register" state={location.state} className="font-bold">Create an account</Link></p>
+          <p className="mt-7 text-muted">New here? <Link to="/register" state={location.state} className="font-bold">Create an account</Link></p>
+        </div>
       </section>
     </main>
   );
