@@ -28,7 +28,7 @@ export default function Dashboard() {
 
   return (
     <main className="page-wrap">
-      <header className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+      <header className="shelf-hero mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <Link to="/" className="brand-word text-5xl no-underline">Owezy</Link>
           <p className="eyebrow mt-3">Your travel shelf</p>
@@ -78,7 +78,7 @@ export default function Dashboard() {
         )}
       </section>
 
-      <nav aria-label="Trip shortcuts" className="mt-5 flex flex-wrap gap-3">
+      <nav aria-label="Trip shortcuts" className="journey-shortcuts mt-5 flex flex-wrap gap-3">
         <Link to="/home?mode=join" className="button button-quiet">Join with room code →</Link>
         <Link to="/home" className="button button-quiet">Accept invitation →</Link>
       </nav>
