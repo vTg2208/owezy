@@ -1,6 +1,6 @@
-# Trip Expense Manager
+# Owezy
 
-Trip Expense Manager is a React and Express application for shared trip expenses, exact balance calculations, settlement suggestions, chat, and private receipt images.
+Owezy is an India-first React and Express application for shared trip expenses, exact balance calculations, recipient-confirmed settlements, chat, and private receipt images.
 
 ## Features
 
@@ -28,13 +28,10 @@ The frontend uses React 18, Vite, TypeScript, and Tailwind CSS. The backend API 
 
 ## Local setup
 
-Install dependencies:
+Install the npm workspace from the repository root:
 
 ```bash
-cd backend
-npm install
-cd ../frontend
-npm install
+npm ci
 ```
 
 Create `backend/.env` from `backend/.env.example`:
@@ -171,24 +168,22 @@ For rollback, stop the new backend and restore traffic to the read-only legacy d
 ## Verification
 
 ```bash
-cd backend
-npm test
-npm run build
-cd ../frontend
-npm run build
+npm run verify
 ```
 
-PostgreSQL migration integration tests run only when `TEST_DATABASE_URL` is configured.
+`verify` runs ESLint, backend and frontend unit/integration tests, both production builds, six Playwright browser flows, and the production dependency audit. PostgreSQL migration integration tests run only when `TEST_DATABASE_URL` is configured; CI always supplies a live PostgreSQL 18 service, so skipped integration tests are not accepted by the release gate. Install the browser once locally with `npx playwright install chromium`.
 
 ## Deployment
+
+The detailed environment matrix, Railway/Vercel release sequence, scheduled receipt cleanup, key rotation, backup/restore drill, incident response, and rollback controls live in [`docs/operations.md`](docs/operations.md).
 
 Deploy in this order:
 
 1. Provision and back up PostgreSQL.
 2. Configure Firebase credentials, `DATABASE_URL`, authenticated TLS with `DATABASE_SSL=true` (and `DATABASE_SSL_CA` when required), plus bounded database timeouts.
 3. Provision Cloudflare R2 and set `RECEIPT_STORAGE_DRIVER=r2` plus its endpoint, bucket, and scoped object credentials.
-4. Build the backend with `npm install && npm run build`.
-5. Run `npm run migrate` as a release step before starting the new backend.
+4. Build the backend image from `backend/Dockerfile`.
+5. Run `node dist/db/migrate.js` as a pre-deploy step before starting the new backend.
 6. If migrating, complete the dry-run, migration, verification, and smoke tests before opening writes.
 7. Start the backend with `npm start`.
 8. Deploy the Vite frontend with `VITE_API_URL=https://your-backend.example/api` and the Firebase `VITE_*` values.

@@ -19,8 +19,9 @@ export function useTripSnapshot(tripId: string) {
     if (inFlight.current) return inFlight.current;
     if (!force && Date.now() < nextRetry.current) return Promise.resolve();
     controller.current?.abort();
-    controller.current = new AbortController();
-    const promise = api.getTrip(tripId, controller.current.signal)
+    const requestController = new AbortController();
+    controller.current = requestController;
+    const promise = api.getTrip(tripId, requestController.signal)
       .then((next) => {
         setSnapshot(next);
         setError(undefined);
@@ -29,14 +30,14 @@ export function useTripSnapshot(tripId: string) {
         lastSuccess.current = Date.now();
       })
       .catch((failure: unknown) => {
-        if (controller.current?.signal.aborted) return;
+        if (requestController.signal.aborted) return;
         failures.current += 1;
         nextRetry.current = Date.now() + Math.min(1_000 * 2 ** failures.current, MAX_BACKOFF_MS);
         setError(failure instanceof Error ? failure.message : 'Failed to load trip');
       })
       .finally(() => {
         setLoading(false);
-        inFlight.current = undefined;
+        if (inFlight.current === promise) inFlight.current = undefined;
       });
     inFlight.current = promise;
     return promise;
@@ -55,6 +56,7 @@ export function useTripSnapshot(tripId: string) {
     document.addEventListener('visibilitychange', refreshOnFocus);
     return () => {
       controller.current?.abort();
+      inFlight.current = undefined;
       window.removeEventListener('focus', refreshOnFocus);
       document.removeEventListener('visibilitychange', refreshOnFocus);
     };

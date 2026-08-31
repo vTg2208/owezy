@@ -31,12 +31,21 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const e2eAuthEnabled = import.meta.env.VITE_E2E_AUTH === 'true';
+const e2eUser: User = {
+  id: 'e2e-user', email: 'traveller@example.com', name: 'Test Traveller', emailVerified: true,
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (e2eAuthEnabled) {
+      setUser(e2eUser);
+      setIsLoading(false);
+      return undefined;
+    }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         // User is signed in
@@ -66,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
+    if (e2eAuthEnabled) { setUser({ ...e2eUser, email: email.trim() || e2eUser.email }); return; }
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     
     if (!userCredential.user.emailVerified) {
@@ -78,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const loginWithGoogle = async () => {
+    if (e2eAuthEnabled) { setUser(e2eUser); return; }
     const provider = new GoogleAuthProvider();
     const userCredential = await signInWithPopup(auth, provider);
     // Sync with backend
@@ -85,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const register = async (email: string, password: string, name: string) => {
+    if (e2eAuthEnabled) { setUser(null); return; }
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(userCredential.user, { displayName: name.trim() });
     // Send verification email
@@ -96,12 +108,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    if (e2eAuthEnabled) { setUser(null); return; }
     await signOut(auth);
     setUser(null);
   };
 
   const deleteAccount = async () => {
     if (!user) return;
+    if (e2eAuthEnabled) { setUser(null); return; }
     
     // Call backend to delete from Mongo + Firebase Admin
     await authAPI.deleteAccount();
