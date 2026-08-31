@@ -198,8 +198,10 @@ export const api = {
   ) => request<{ inviteId: string; token: string; expiresInHours: number }>(
     `/trips/${tripId}/invites`, { method: 'POST', json: { email, expiresInHours }, idempotencyKey },
   ),
-  revokeInvite: (tripId: string, inviteId: string) => request<{ success: true }>(
-    `/trips/${tripId}/invites/${inviteId}`, { method: 'DELETE' },
+  revokeInvite: (
+    tripId: string, inviteId: string, idempotencyKey = createIdempotencyKey(),
+  ) => request<{ success: true }>(
+    `/trips/${tripId}/invites/${inviteId}`, { method: 'DELETE', idempotencyKey },
   ),
   acceptInvite: (token: string, idempotencyKey = createIdempotencyKey()) => request<{
     tripId: string; membershipId: string;

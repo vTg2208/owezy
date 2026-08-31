@@ -22,7 +22,7 @@ export default function InvitePanel({ tripId }: { tripId: string }) {
   const copy = async () => {
     if (!invite) return;
     try {
-      const url = `${window.location.origin}/home?invite=${encodeURIComponent(invite.token)}`;
+      const url = `${window.location.origin}/home#invite=${encodeURIComponent(invite.token)}`;
       await navigator.clipboard.writeText(url);
       setMessage('Private invitation link copied.');
     } catch { setError('Copy failed. Select and copy the token manually.'); }

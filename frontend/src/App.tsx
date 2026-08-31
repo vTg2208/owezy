@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Welcome from './pages/Welcome';
 import Home from './pages/Home';
@@ -8,8 +8,9 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 
 // Protected route wrapper
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
   
   if (isLoading) {
     return (
@@ -22,7 +23,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
   
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate
+      to="/login"
+      replace
+      state={{ returnTo: `${location.pathname}${location.search}${location.hash}` }}
+    />;
   }
   
   return <>{children}</>;

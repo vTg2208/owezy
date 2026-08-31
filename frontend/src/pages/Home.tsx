@@ -1,31 +1,44 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 
 type Mode = 'choose' | 'create' | 'join' | 'accept';
 
 function modeFromParams(params: URLSearchParams): Mode {
-  if (params.get('invite')) return 'accept';
   const mode = params.get('mode');
-  return mode === 'create' || mode === 'join' ? mode : 'choose';
+  return mode === 'create' || mode === 'join' || mode === 'accept' ? mode : 'choose';
+}
+
+export function invitationFromLocation(_search: string, hash: string): string {
+  if (!hash.startsWith('#')) return '';
+  return new URLSearchParams(hash.slice(1)).get('invite')?.trim() ?? '';
 }
 
 export default function Home() {
-  const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState<Mode>(() => modeFromParams(searchParams));
+  const location = useLocation();
+  const initialInvite = invitationFromLocation(location.search, location.hash);
+  const [mode, setMode] = useState<Mode>(() => initialInvite
+    ? 'accept'
+    : modeFromParams(new URLSearchParams(location.search)));
   const [tripName, setTripName] = useState('');
   const [roomCode, setRoomCode] = useState('');
-  const [inviteToken, setInviteToken] = useState(() => searchParams.get('invite') ?? '');
+  const [inviteToken, setInviteToken] = useState(initialInvite);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const { user } = useAuth();
 
   useEffect(() => {
-    setMode(modeFromParams(searchParams));
-    setInviteToken(searchParams.get('invite') ?? '');
-  }, [searchParams]);
+    const token = invitationFromLocation(location.search, location.hash);
+    if (token) {
+      setMode('accept');
+      setInviteToken(token);
+      navigate('/home?mode=accept', { replace: true });
+      return;
+    }
+    setMode(modeFromParams(new URLSearchParams(location.search)));
+  }, [location.hash, location.search, navigate]);
 
   const run = async (work: () => Promise<{ tripId: string }>) => {
     setLoading(true);

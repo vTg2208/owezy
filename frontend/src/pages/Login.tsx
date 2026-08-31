@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { safeReturnTo } from '../utils/navigation';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -10,11 +11,13 @@ export default function Login() {
   const [params] = useSearchParams();
   const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo = safeReturnTo(location.state);
 
   const perform = async (work: () => Promise<void>) => {
     setError('');
     setIsLoading(true);
-    try { await work(); navigate('/dashboard'); }
+    try { await work(); navigate(returnTo, { replace: true }); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Login failed.'); }
     finally { setIsLoading(false); }
   };
@@ -46,7 +49,7 @@ export default function Login() {
 
         <div className="auth-divider my-6">or</div>
         <button type="button" onClick={() => void perform(loginWithGoogle)} disabled={isLoading} className="button button-secondary w-full">Continue with Google</button>
-        <p className="mt-7 text-center text-muted">New here? <Link to="/register" className="font-bold">Create an account</Link></p>
+        <p className="mt-7 text-center text-muted">New here? <Link to="/register" state={location.state} className="font-bold">Create an account</Link></p>
       </section>
     </main>
   );

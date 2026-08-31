@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { safeReturnTo } from '../utils/navigation';
 
 export default function Register() {
   const [email, setEmail] = useState('');
@@ -10,6 +11,8 @@ export default function Register() {
   const [isLoading, setIsLoading] = useState(false);
   const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo = safeReturnTo(location.state);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -18,7 +21,7 @@ export default function Register() {
     setIsLoading(true);
     try {
       await register(email.trim(), password, name.trim());
-      navigate('/login?verified=pending', { replace: true });
+      navigate('/login?verified=pending', { replace: true, state: location.state });
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Registration failed.');
     } finally { setIsLoading(false); }
@@ -27,7 +30,7 @@ export default function Register() {
   const handleGoogle = async () => {
     setError('');
     setIsLoading(true);
-    try { await loginWithGoogle(); navigate('/dashboard'); }
+    try { await loginWithGoogle(); navigate(returnTo, { replace: true }); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Google sign-up failed.'); }
     finally { setIsLoading(false); }
   };
@@ -53,7 +56,7 @@ export default function Register() {
         </form>
         <div className="auth-divider my-6">or</div>
         <button type="button" onClick={() => void handleGoogle()} disabled={isLoading} className="button button-secondary w-full">Continue with Google</button>
-        <p className="mt-7 text-center text-muted">Already packed? <Link to="/login" className="font-bold">Log in</Link></p>
+        <p className="mt-7 text-center text-muted">Already packed? <Link to="/login" state={location.state} className="font-bold">Log in</Link></p>
       </section>
     </main>
   );
