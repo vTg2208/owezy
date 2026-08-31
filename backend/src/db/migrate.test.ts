@@ -164,7 +164,7 @@ describe('applyPendingMigrations', () => {
     expect(events).toEqual(['connect', 'end']);
   });
 
-  it('loads the receipt storage upgrade after the authorized services migration', () => {
+  it('loads production hardening after the owner continuity migration', () => {
     const migrations = loadMigrations(join(__dirname, 'migrations'));
 
     expect(migrations.map(({ id }) => id)).toEqual([
@@ -173,6 +173,7 @@ describe('applyPendingMigrations', () => {
       '003_authorized_services.sql',
       '004_receipt_storage.sql',
       '005_owner_continuity.sql',
+      '006_production_hardening.sql',
     ]);
   });
 });

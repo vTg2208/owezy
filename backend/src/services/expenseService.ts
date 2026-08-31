@@ -211,9 +211,9 @@ export class ExpenseService {
     let allocations: ExpenseAllocation[];
     if (splitType === 'equal') {
       try {
-        allocations = allocateEqual(Number(totalMinor), membershipIds).map((allocation) => ({
+        allocations = allocateEqual(totalMinor, membershipIds).map((allocation) => ({
           membershipId: allocation.memberId,
-          amountMinor: BigInt(allocation.amountMinor),
+          amountMinor: allocation.amountMinor,
         }));
       } catch (error) {
         throw new ServiceError(400, error instanceof Error ? error.message : 'Invalid equal split');

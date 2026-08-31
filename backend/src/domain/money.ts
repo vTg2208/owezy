@@ -1,18 +1,18 @@
 export interface MoneyAllocation {
   memberId: string;
-  amountMinor: number;
+  amountMinor: bigint;
 }
 
-export function allocateEqual(totalMinor: number, memberIds: readonly string[]): MoneyAllocation[] {
-  if (!Number.isSafeInteger(totalMinor) || totalMinor <= 0) {
-    throw new Error('totalMinor must be a positive safe integer');
+export function allocateEqual(totalMinor: bigint, memberIds: readonly string[]): MoneyAllocation[] {
+  if (typeof totalMinor !== 'bigint' || totalMinor <= 0n) {
+    throw new Error('totalMinor must be a positive bigint');
   }
 
   if (memberIds.length === 0) {
     throw new Error('memberIds must not be empty');
   }
 
-  if (totalMinor < memberIds.length) {
+  if (totalMinor < BigInt(memberIds.length)) {
     throw new Error('totalMinor must allow a positive amount for every member');
   }
 
@@ -20,25 +20,26 @@ export function allocateEqual(totalMinor: number, memberIds: readonly string[]):
     throw new Error('memberIds must not contain duplicates');
   }
 
-  const amountPerMember = Math.floor(totalMinor / memberIds.length);
-  const remainder = totalMinor % memberIds.length;
+  const memberCount = BigInt(memberIds.length);
+  const amountPerMember = totalMinor / memberCount;
+  const remainder = totalMinor % memberCount;
 
   return memberIds.map((memberId, index) => ({
     memberId,
-    amountMinor: amountPerMember + (index < remainder ? 1 : 0),
+    amountMinor: amountPerMember + (BigInt(index) < remainder ? 1n : 0n),
   }));
 }
 
-export function majorToMinor(major: string): number {
+export function majorToMinor(major: string): bigint {
   if (typeof major !== 'string' || !/^\d+(?:\.\d{1,2})?$/.test(major)) {
     throw new Error('major must be a positive decimal string with at most two fraction digits');
   }
 
   const [whole, fraction = ''] = major.split('.');
-  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  const minor = BigInt(`${whole}${fraction.padEnd(2, '0')}`);
 
-  if (!Number.isSafeInteger(minor) || minor <= 0) {
-    throw new Error('major must be a positive decimal within the safe integer range');
+  if (minor <= 0n) {
+    throw new Error('major must be a positive decimal');
   }
 
   return minor;
