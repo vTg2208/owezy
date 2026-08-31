@@ -20,6 +20,7 @@ Railway backend:
 | `DATABASE_URL` | Private Railway PostgreSQL reference |
 | `DATABASE_SSL` | `false` for Railway private networking; `true` for an external TLS endpoint |
 | `CORS_ALLOWED_ORIGINS` | Exact comma-separated Vercel production and approved preview origins |
+| `TRUST_PROXY_HOPS` | Verified reverse-proxy hop count; `1` for the current direct Railway edge-to-service path |
 | `FIREBASE_SERVICE_ACCOUNT` | Complete Firebase service-account JSON stored as a Railway secret; alternatively use `GOOGLE_APPLICATION_CREDENTIALS` with a securely mounted file |
 | `RECEIPT_STORAGE_DRIVER` | `r2` |
 | `R2_ENDPOINT` | Account S3 endpoint |
@@ -49,6 +50,8 @@ Vercel frontend:
 5. Start with `node dist/server.js`; configure the service health check as `/ready` with at least a 30-second timeout.
 6. Deploy the Vercel project only after the backend is ready. Verify `/live`, `/ready`, login, direct trip navigation, an expense read, and an authenticated receipt read.
 7. Schedule `node dist/scripts/cleanup-receipts.js --limit=100` at least daily in a separate Railway cron service using the same backend image and variables. Its advisory lock makes overlapping runs yield safely.
+
+Before changing Railway networking or placing another CDN/proxy in front of it, re-verify `TRUST_PROXY_HOPS`; an incorrect value can collapse the IP limiter into a global limiter or trust a client-supplied address. The in-process rate-limit store is intentionally a single-replica control. Before scaling the backend above one replica, replace it with a shared supported store and re-run the rate-limit security tests.
 
 Railway's legacy `railway.toml`/`railway.json` Config-as-Code path is not used because it is retired for new services in December 2026. After linking the real Railway project, run `railway config init`, review the generated `.railway/railway.ts`, and apply it through `railway config plan`/`railway config apply`; resource IDs and secret references must come from that linked project rather than being guessed in source.
 

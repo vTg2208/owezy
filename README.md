@@ -19,7 +19,7 @@ Receipt bytes are never stored in PostgreSQL or expense JSON. PostgreSQL stores 
 
 ## Stack and prerequisites
 
-- Node.js 20.19.0 or newer
+- Node.js 24.20.0 LTS or newer
 - PostgreSQL
 - Firebase project and Admin credentials
 - MongoDB access only while migrating a legacy deployment
@@ -43,6 +43,7 @@ RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX=300
 UID_RATE_LIMIT_WINDOW_MS=900000
 UID_RATE_LIMIT_MAX=180
+TRUST_PROXY_HOPS=0
 SHUTDOWN_TIMEOUT_MS=10000
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/owezy
 DATABASE_SSL=false
@@ -55,7 +56,7 @@ RECEIPT_MAX_BYTES=5242880
 RECEIPT_PENDING_TTL_HOURS=24
 ```
 
-`CORS_ALLOWED_ORIGINS` is a comma-separated exact allowlist and is mandatory in production. API responses include security headers and request IDs; the defaults are 300 requests per 15 minutes per client IP and 180 authenticated API requests per 15 minutes per trusted Firebase UID. `SHUTDOWN_TIMEOUT_MS` bounds graceful HTTP shutdown before lingering connections are forced closed. `/live` reports process liveness, while `/ready` (and the backward-compatible `/health`) verifies PostgreSQL readiness.
+`CORS_ALLOWED_ORIGINS` is a comma-separated exact allowlist and is mandatory in production. `TRUST_PROXY_HOPS` is also mandatory in production: use `0` for direct local access and verify the deployed reverse-proxy path before setting it (the current direct Railway path uses `1`). API responses include security headers and request IDs; the defaults are 300 requests per 15 minutes per client IP and 180 authenticated API requests per 15 minutes per trusted Firebase UID. `SHUTDOWN_TIMEOUT_MS` bounds graceful HTTP shutdown before lingering connections are forced closed. `/live` reports process liveness, while `/ready` (and the backward-compatible `/health`) verifies PostgreSQL readiness.
 
 `DATABASE_SSL=true` always verifies the PostgreSQL server certificate. Set `DATABASE_SSL_CA` to a PEM trust root when the platform CA is not sufficient; literal `\n` sequences are expanded. Connection and query timeouts are bounded positive millisecond values (defaults: 5,000 and 10,000). `RECEIPT_STORAGE_DRIVER` is `disabled`, `local`, or `r2`. Local storage requires `RECEIPT_STORAGE_ROOT`; paths are confined under that root and publication uses an exclusive temporary file plus atomic rename. R2 requires `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`; incomplete configuration stops startup. The default upload limit is 5 MiB.
 
@@ -94,7 +95,7 @@ New clients should use `/api/v1`; the existing `/api` routes remain available du
 
 Payments start as `pending`. Only the recipient can confirm or reject them, only the payer can cancel them, and every terminal transition is final. Correcting an expense requires `expectedVersion`, voids the current row, and creates the next active version under the same logical `expense_key`; voiding also requires `expectedVersion`. Only active expense versions and confirmed payments contribute to balances.
 
-Invitation responses expose the raw token once. PostgreSQL stores only its SHA-256 hash. Invitation acceptance requires the authenticated Firebase email to match, and all invitation mutation routes require an `Idempotency-Key`. Audit history is available to active trip members at `GET /api/v1/trips/:tripId/audit`; payment state is available at `GET /api/v1/trips/:tripId/payments`.
+Invitation responses expose the raw token once. PostgreSQL stores only its SHA-256 hash, and generated links carry it in a URL fragment so hosting logs and referrers never receive it. Invitation acceptance requires the authenticated, verified Firebase email to match, and all invitation mutation routes require an `Idempotency-Key`. Audit history is available to active trip members at `GET /api/v1/trips/:tripId/audit`; payment state is available at `GET /api/v1/trips/:tripId/payments`.
 
 ## Receipt lifecycle and cleanup
 

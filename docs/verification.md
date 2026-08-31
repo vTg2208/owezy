@@ -1,6 +1,6 @@
 # Production hardening verification matrix
 
-Verified on 2026-08-31 against Node.js 20-compatible tooling, PostgreSQL 18, and Chromium.
+Verified on 2026-08-31 against Node.js 24 LTS-compatible tooling, PostgreSQL 18, and Chromium.
 
 | Requirement | Implementation control | Automated/operational evidence |
 | --- | --- | --- |
