@@ -16,10 +16,9 @@ import { PaymentService, PaymentRecord } from '../services/paymentService';
 import { minorToMajor } from '../domain/money';
 import type { QueryExecutor } from '../repositories/database';
 import {
-  DisabledReceiptStorage,
   getReceiptStorageConfig,
-  LocalReceiptStorage,
 } from '../storage/receiptStorage';
+import { createReceiptStorage } from '../storage/createReceiptStorage';
 
 export interface ApiRoutesDependencies {
   tripService: Pick<TripService, 'createTrip' | 'joinTrip' | 'getTrip' | 'setLocked' | 'removeMember'>;
@@ -39,9 +38,7 @@ function defaultDependencies(): ApiRoutesDependencies {
   const expenseRepository = new PostgresExpenseRepository();
   const financialRepository = new PostgresFinancialRepository();
   const receiptConfig = getReceiptStorageConfig();
-  const receiptStorage = receiptConfig.root
-    ? new LocalReceiptStorage(receiptConfig.root)
-    : new DisabledReceiptStorage();
+  const receiptStorage = createReceiptStorage(receiptConfig);
   return {
     tripService: new TripService(tripRepository),
     expenseService: new ExpenseService(expenseRepository),

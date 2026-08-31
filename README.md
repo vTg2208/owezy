@@ -50,6 +50,7 @@ DATABASE_SSL=false
 DATABASE_CONNECTION_TIMEOUT_MS=5000
 DATABASE_QUERY_TIMEOUT_MS=10000
 GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
+RECEIPT_STORAGE_DRIVER=local
 RECEIPT_STORAGE_ROOT=./var/receipts
 RECEIPT_MAX_BYTES=5242880
 RECEIPT_PENDING_TTL_HOURS=24
@@ -57,7 +58,7 @@ RECEIPT_PENDING_TTL_HOURS=24
 
 `CORS_ALLOWED_ORIGINS` is a comma-separated exact allowlist and is mandatory in production. API responses include security headers and request IDs; the default rate limit is 300 requests per 15 minutes per client. `SHUTDOWN_TIMEOUT_MS` bounds graceful HTTP shutdown before lingering connections are forced closed. `/live` reports process liveness, while `/ready` (and the backward-compatible `/health`) verifies PostgreSQL readiness.
 
-`DATABASE_SSL=true` always verifies the PostgreSQL server certificate. Set `DATABASE_SSL_CA` to a PEM trust root when the platform CA is not sufficient; literal `\n` sequences are expanded. Connection and query timeouts are bounded positive millisecond values (defaults: 5,000 and 10,000). `RECEIPT_STORAGE_ROOT` is optional. If it is absent, receipt storage is disabled and upload attempts return a service-unavailable response. Paths are resolved under the configured root and object names are generated deterministically from server-issued receipt IDs. Local receipt publication writes and syncs an exclusive same-directory temporary file before an atomic rename, so migration repair never exposes partial bytes. The default backend upload limit is 5 MiB; the frontend intentionally leaves byte-limit enforcement to the configured backend.
+`DATABASE_SSL=true` always verifies the PostgreSQL server certificate. Set `DATABASE_SSL_CA` to a PEM trust root when the platform CA is not sufficient; literal `\n` sequences are expanded. Connection and query timeouts are bounded positive millisecond values (defaults: 5,000 and 10,000). `RECEIPT_STORAGE_DRIVER` is `disabled`, `local`, or `r2`. Local storage requires `RECEIPT_STORAGE_ROOT`; paths are confined under that root and publication uses an exclusive temporary file plus atomic rename. R2 requires `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`; incomplete configuration stops startup. The default upload limit is 5 MiB.
 
 Create `frontend/.env` from `frontend/.env.example`. The API value must include the backend `/api` prefix:
 
@@ -100,7 +101,20 @@ Invitation responses expose the raw token once. PostgreSQL stores only its SHA-2
 
 `POST /api/trips/:tripId/receipts` accepts a raw image body after Firebase authentication. The upload is stored as `pending` with `pending_expires_at`. Creating an expense with its `receiptId` locks and attaches that receipt in the same PostgreSQL transaction as the expense and splits; the receipt must belong to the same trip and acting membership.
 
-Pending rows older than `RECEIPT_PENDING_TTL_HOURS` are cleanup candidates. Cleanup must remove the object through the same path-safe storage implementation before deleting its metadata. Operators can identify candidates with:
+Pending rows older than `RECEIPT_PENDING_TTL_HOURS` are cleanup candidates. Preview a bounded cleanup without mutations:
+
+```bash
+cd backend
+npm run receipts:cleanup -- --dry-run --limit=100
+```
+
+Run cleanup from one scheduler; the command also takes a PostgreSQL advisory lock so overlapping invocations safely yield. Object removal always precedes conditional metadata deletion:
+
+```bash
+npm run receipts:cleanup -- --limit=100
+```
+
+The command prints `{ scanned, removed, failed }` JSON and exits unsuccessfully when any removal fails. It is safe to retry because local and R2 deletes are idempotent. Operators can also inspect candidates with:
 
 ```sql
 SELECT id, storage_key
@@ -109,9 +123,9 @@ SELECT id, storage_key
    AND pending_expires_at <= now();
 ```
 
-After the corresponding objects are removed, delete only those expired pending rows. Never use a storage key as an unrestricted filesystem path.
+Never delete metadata before its corresponding object and never use a storage key as an unrestricted filesystem path.
 
-The local filesystem implementation is intended for development or a single backend instance with a durable mounted disk. Ephemeral deployment filesystems will lose receipts. Production deployment must configure a persistent disk at `RECEIPT_STORAGE_ROOT` and ensure every serving instance sees the same storage, or keep uploads disabled until a shared `ReceiptStorage` implementation is provided.
+The local driver is intended only for development or one instance with a durable mounted disk. Production uses Cloudflare R2 so receipt bytes survive restarts and every backend instance sees the same objects. Following Cloudflare’s S3-compatible configuration, the adapter uses AWS SDK v3 with the configured endpoint and `region=auto`.
 
 ## Legacy MongoDB migration
 
@@ -121,6 +135,7 @@ Migration requires migrations 001-005 to be applied first. Migration 005 transfe
 MONGODB_URI=mongodb://localhost:27017/tripexpense
 MONGODB_DATABASE=tripexpense
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/owezy
+RECEIPT_STORAGE_DRIVER=local
 RECEIPT_STORAGE_ROOT=./var/receipts
 ```
 
@@ -171,14 +186,14 @@ Deploy in this order:
 
 1. Provision and back up PostgreSQL.
 2. Configure Firebase credentials, `DATABASE_URL`, authenticated TLS with `DATABASE_SSL=true` (and `DATABASE_SSL_CA` when required), plus bounded database timeouts.
-3. Provision durable receipt storage and set `RECEIPT_STORAGE_ROOT`, or leave uploads disabled.
+3. Provision Cloudflare R2 and set `RECEIPT_STORAGE_DRIVER=r2` plus its endpoint, bucket, and scoped object credentials.
 4. Build the backend with `npm install && npm run build`.
 5. Run `npm run migrate` as a release step before starting the new backend.
 6. If migrating, complete the dry-run, migration, verification, and smoke tests before opening writes.
 7. Start the backend with `npm start`.
 8. Deploy the Vite frontend with `VITE_API_URL=https://your-backend.example/api` and the Firebase `VITE_*` values.
 
-Do not place Firebase service-account JSON, database passwords, MongoDB credentials, or receipt files in source control.
+Do not place Firebase service-account JSON, database passwords, MongoDB credentials, R2 credentials, or receipt files in source control.
 
 ## Author
 

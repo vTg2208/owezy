@@ -2,12 +2,11 @@ import { createHash } from 'node:crypto';
 import { MongoClient } from 'mongodb';
 import { majorToMinor } from '../domain/money';
 import {
-  DisabledReceiptStorage,
   getReceiptStorageConfig,
-  LocalReceiptStorage,
   ReceiptStorage,
   SupportedReceiptContentType,
 } from '../storage/receiptStorage';
+import { createReceiptStorage } from '../storage/createReceiptStorage';
 import {
   defaultDatabase,
   defaultTransaction,
@@ -1457,9 +1456,7 @@ export async function runMigrationCli(
     );
     const plan = transformLegacySnapshot(snapshot);
     const storageConfig = getReceiptStorageConfig(environment);
-    const storage = storageConfig.root
-      ? new LocalReceiptStorage(storageConfig.root)
-      : new DisabledReceiptStorage();
+    const storage = createReceiptStorage(storageConfig);
     const result = await executeMigration(plan, {
       dryRun: options.dryRun,
       target: new PostgresMigrationTarget(),

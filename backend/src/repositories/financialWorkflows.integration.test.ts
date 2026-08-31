@@ -10,6 +10,7 @@ import { ExpenseService } from '../services/expenseService';
 import { IdempotencyService } from '../services/idempotencyService';
 import { InviteService } from '../services/inviteService';
 import { PaymentService } from '../services/paymentService';
+import { cleanupExpiredReceipts, PostgresReceiptCleanupRepository } from '../jobs/receiptCleanup';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const runDatabaseTests = testDatabaseUrl ? describe : describe.skip;
@@ -149,5 +150,33 @@ runDatabaseTests('production financial workflows', () => {
     const stored = await client.query(`SELECT token_hash FROM trip_invites WHERE id = 'invite-1'`);
     expect(stored.rows[0].token_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(stored.rows[0].token_hash).not.toContain('raw-secret-token');
+  });
+
+  it('locks, removes, and conditionally deletes expired pending receipts', async () => {
+    await client.query(`
+      INSERT INTO receipts
+        (id, trip_id, uploaded_by_membership_id, storage_key, content_type,
+         byte_size, checksum_sha256, status, pending_expires_at)
+      VALUES
+        ('expired-receipt', 'trip-1', 'owner-member', 'expired-receipt.png', 'image/png',
+         8, repeat('a', 64), 'pending', now() - interval '1 hour')
+    `);
+    const removed: string[] = [];
+    const result = await cleanupExpiredReceipts(
+      { dryRun: false, limit: 10 },
+      {
+        repository: new PostgresReceiptCleanupRepository(transaction),
+        storage: {
+          async write() { return { storageKey: '' }; },
+          async read() { return Buffer.alloc(0); },
+          async remove(key) { removed.push(key); },
+        },
+      },
+    );
+
+    expect(result).toEqual({ scanned: 1, removed: 1, failed: 0 });
+    expect(removed).toEqual(['expired-receipt.png']);
+    await expect(client.query(`SELECT id FROM receipts WHERE id = 'expired-receipt'`))
+      .resolves.toMatchObject({ rowCount: 0 });
   });
 });

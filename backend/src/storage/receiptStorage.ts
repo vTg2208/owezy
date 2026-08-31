@@ -18,14 +18,21 @@ export interface ReceiptStorage {
 }
 
 export interface ReceiptStorageConfig {
+  driver: 'disabled' | 'local' | 'r2';
   root?: string;
+  r2?: {
+    endpoint: string;
+    bucket: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+  };
   maxBytes: number;
   pendingTtlHours: number;
 }
 
 export class ReceiptStorageDisabledError extends Error {
   constructor() {
-    super('Receipt uploads are disabled because RECEIPT_STORAGE_ROOT is not configured');
+    super('Receipt uploads are disabled by RECEIPT_STORAGE_DRIVER');
     this.name = 'ReceiptStorageDisabledError';
   }
 }
@@ -47,8 +54,42 @@ export function getReceiptStorageConfig(
   environment: Record<string, string | undefined> = process.env,
 ): ReceiptStorageConfig {
   const configuredRoot = environment.RECEIPT_STORAGE_ROOT?.trim();
+  const configuredDriver = environment.RECEIPT_STORAGE_DRIVER?.trim().toLowerCase();
+  const driver = configuredDriver || (configuredRoot ? 'local' : 'disabled');
+  if (!['disabled', 'local', 'r2'].includes(driver)) {
+    throw new Error('RECEIPT_STORAGE_DRIVER must be disabled, local, or r2');
+  }
+  if (driver === 'local' && !configuredRoot) {
+    throw new Error('RECEIPT_STORAGE_ROOT is required when RECEIPT_STORAGE_DRIVER=local');
+  }
+  let r2: ReceiptStorageConfig['r2'];
+  if (driver === 'r2') {
+    const required = [
+      ['R2_ENDPOINT', environment.R2_ENDPOINT?.trim()],
+      ['R2_BUCKET', environment.R2_BUCKET?.trim()],
+      ['R2_ACCESS_KEY_ID', environment.R2_ACCESS_KEY_ID?.trim()],
+      ['R2_SECRET_ACCESS_KEY', environment.R2_SECRET_ACCESS_KEY?.trim()],
+    ] as const;
+    const missing = required.filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length) throw new Error(`${missing.join(', ')} required when RECEIPT_STORAGE_DRIVER=r2`);
+    let endpoint: URL;
+    try {
+      endpoint = new URL(required[0][1]!);
+    } catch {
+      throw new Error('R2_ENDPOINT must be a valid HTTPS URL');
+    }
+    if (endpoint.protocol !== 'https:') throw new Error('R2_ENDPOINT must be a valid HTTPS URL');
+    r2 = {
+      endpoint: endpoint.toString().replace(/\/$/, ''),
+      bucket: required[1][1]!,
+      accessKeyId: required[2][1]!,
+      secretAccessKey: required[3][1]!,
+    };
+  }
   return {
-    ...(configuredRoot ? { root: resolve(configuredRoot) } : {}),
+    driver: driver as ReceiptStorageConfig['driver'],
+    ...(driver === 'local' && configuredRoot ? { root: resolve(configuredRoot) } : {}),
+    ...(r2 ? { r2 } : {}),
     maxBytes: positiveInteger(
       environment.RECEIPT_MAX_BYTES,
       'RECEIPT_MAX_BYTES',

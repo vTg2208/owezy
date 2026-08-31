@@ -113,6 +113,23 @@ describe('LocalReceiptStorage', () => {
 });
 
 describe('receipt storage configuration', () => {
+  it('requires complete R2 configuration when the shared driver is selected', () => {
+    expect(getReceiptStorageConfig({
+      RECEIPT_STORAGE_DRIVER: 'r2',
+      R2_ENDPOINT: 'https://account.r2.cloudflarestorage.com',
+      R2_BUCKET: 'receipts',
+      R2_ACCESS_KEY_ID: 'access',
+      R2_SECRET_ACCESS_KEY: 'secret',
+    })).toMatchObject({
+      driver: 'r2',
+      r2: {
+        endpoint: 'https://account.r2.cloudflarestorage.com', bucket: 'receipts',
+        accessKeyId: 'access', secretAccessKey: 'secret',
+      },
+    });
+    expect(() => getReceiptStorageConfig({ RECEIPT_STORAGE_DRIVER: 'r2' }))
+      .toThrow(/R2_ENDPOINT/);
+  });
   it('uses a disabled storage boundary when no local root is configured', async () => {
     const storage = new DisabledReceiptStorage();
 
@@ -126,6 +143,7 @@ describe('receipt storage configuration', () => {
     const root = await temporaryDirectory();
 
     expect(getReceiptStorageConfig({ RECEIPT_STORAGE_ROOT: root })).toEqual({
+      driver: 'local',
       root,
       maxBytes: 5 * 1024 * 1024,
       pendingTtlHours: 24,
