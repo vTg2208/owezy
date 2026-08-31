@@ -165,6 +165,19 @@ describe('ExpenseService', () => {
     ]);
   });
 
+  it('rejects an unsafe JSON number before it can be rounded into a different amount', async () => {
+    const repository = new MemoryExpenseRepository();
+
+    await expect(service(repository).createExpense('user-a', 'trip-1', {
+      description: 'Rounded booking', amount: 90071992547409.93,
+      splitType: 'equal', splits: [{ participantId: 'member-a', amount: 0 }],
+    })).rejects.toMatchObject({
+      status: 400,
+      message: 'amount must be a positive amount with at most two decimal places',
+    });
+    expect(repository.expenses).toEqual([]);
+  });
+
   it('requires active membership before creating an expense', async () => {
     await expect(service().createExpense('outsider', 'trip-1', {
       description: 'Meal', amount: 10, splitType: 'equal', splits: [{ participantId: 'member-a', amount: 10 }],

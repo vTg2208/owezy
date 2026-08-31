@@ -1,7 +1,49 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 ALTER TABLE trips
-  ADD COLUMN currency char(3) NOT NULL DEFAULT 'INR',
+  ADD COLUMN currency char(3);
+
+DO $$
+DECLARE
+  mixed_trip_id text;
+BEGIN
+  SELECT currencies.trip_id
+    INTO mixed_trip_id
+    FROM (
+      SELECT trip_id, count(DISTINCT currency) AS currency_count
+        FROM (
+          SELECT trip_id, currency FROM expenses
+          UNION ALL
+          SELECT trip_id, currency FROM payments
+        ) financial_currencies
+       GROUP BY trip_id
+    ) currencies
+   WHERE currencies.currency_count > 1
+   ORDER BY currencies.trip_id
+   LIMIT 1;
+
+  IF mixed_trip_id IS NOT NULL THEN
+    RAISE EXCEPTION 'trip_currency_mismatch: trip % has mixed financial currencies', mixed_trip_id;
+  END IF;
+END;
+$$;
+
+UPDATE trips t
+   SET currency = COALESCE((
+     SELECT min(financial_currencies.currency)
+       FROM (
+         SELECT currency FROM expenses WHERE trip_id = t.id
+         UNION ALL
+         SELECT currency FROM payments WHERE trip_id = t.id
+       ) financial_currencies
+   ), 'INR');
+
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;
+
+ALTER TABLE trips
+  ALTER COLUMN currency SET DEFAULT 'INR',
+  ALTER COLUMN currency SET NOT NULL,
   ADD CONSTRAINT trips_currency_check CHECK (currency ~ '^[A-Z]{3}$'),
   ADD CONSTRAINT trips_id_currency_key UNIQUE (id, currency);
 
@@ -37,6 +79,9 @@ UPDATE expenses
    SET expense_key = id
  WHERE expense_key IS NULL;
 
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;
+
 ALTER TABLE expenses
   ALTER COLUMN expense_key SET NOT NULL,
   ADD CONSTRAINT expenses_expense_key_check CHECK (btrim(expense_key) <> ''),
@@ -54,6 +99,7 @@ CREATE UNIQUE INDEX expenses_one_active_version_per_key_idx
 
 ALTER TABLE payments
   DROP CONSTRAINT payments_status_check,
+  ALTER COLUMN status SET DEFAULT 'pending',
   ADD COLUMN confirmed_at timestamptz,
   ADD COLUMN confirmed_by_membership_id text,
   ADD COLUMN rejected_at timestamptz,
@@ -65,6 +111,14 @@ UPDATE payments
    SET confirmed_at = paid_at,
        confirmed_by_membership_id = payee_membership_id
  WHERE status = 'confirmed';
+
+UPDATE payments
+   SET cancelled_at = paid_at,
+       cancelled_by_membership_id = payer_membership_id
+ WHERE status = 'cancelled';
+
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;
 
 ALTER TABLE payments
   ADD CONSTRAINT payments_status_check
@@ -136,9 +190,14 @@ CREATE TABLE idempotency_records (
   operation text NOT NULL CHECK (btrim(operation) <> ''),
   idempotency_key text NOT NULL CHECK (btrim(idempotency_key) <> ''),
   request_hash text NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
-  response_status integer NOT NULL CHECK (response_status BETWEEN 100 AND 599),
-  response_body jsonb NOT NULL,
+  response_status integer CHECK (response_status BETWEEN 100 AND 599),
+  response_body jsonb,
+  completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT idempotency_records_completion_check CHECK (
+    (completed_at IS NULL AND response_status IS NULL AND response_body IS NULL)
+    OR (completed_at IS NOT NULL AND response_status IS NOT NULL AND response_body IS NOT NULL)
+  ),
   FOREIGN KEY (actor_membership_id)
     REFERENCES trip_memberships (id)
     ON DELETE RESTRICT
@@ -167,3 +226,135 @@ CREATE INDEX audit_events_entity_created_at_idx
 
 CREATE INDEX audit_events_actor_created_at_idx
   ON audit_events (actor_membership_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION enforce_expense_append_only()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'expenses are append-only';
+  END IF;
+
+  IF OLD.status = 'active'
+     AND NEW.status = 'voided'
+     AND NEW.voided_at IS NOT NULL
+     AND NEW.id IS NOT DISTINCT FROM OLD.id
+     AND NEW.trip_id IS NOT DISTINCT FROM OLD.trip_id
+     AND NEW.paid_by_membership_id IS NOT DISTINCT FROM OLD.paid_by_membership_id
+     AND NEW.description IS NOT DISTINCT FROM OLD.description
+     AND NEW.total_minor IS NOT DISTINCT FROM OLD.total_minor
+     AND NEW.currency IS NOT DISTINCT FROM OLD.currency
+     AND NEW.split_type IS NOT DISTINCT FROM OLD.split_type
+     AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
+     AND NEW.expense_key IS NOT DISTINCT FROM OLD.expense_key
+     AND NEW.version IS NOT DISTINCT FROM OLD.version
+  THEN
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'expenses are append-only';
+END;
+$$;
+
+CREATE TRIGGER expenses_enforce_append_only
+BEFORE UPDATE OR DELETE ON expenses
+FOR EACH ROW EXECUTE FUNCTION enforce_expense_append_only();
+
+CREATE OR REPLACE FUNCTION prevent_expense_split_rewrite()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'expense splits are append-only';
+END;
+$$;
+
+CREATE TRIGGER expense_splits_enforce_append_only
+BEFORE UPDATE OR DELETE ON expense_splits
+FOR EACH ROW EXECUTE FUNCTION prevent_expense_split_rewrite();
+
+CREATE OR REPLACE FUNCTION enforce_payment_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'payments are append-only';
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.trip_id IS DISTINCT FROM OLD.trip_id
+     OR NEW.payer_membership_id IS DISTINCT FROM OLD.payer_membership_id
+     OR NEW.payee_membership_id IS DISTINCT FROM OLD.payee_membership_id
+     OR NEW.amount_minor IS DISTINCT FROM OLD.amount_minor
+     OR NEW.currency IS DISTINCT FROM OLD.currency
+     OR NEW.paid_at IS DISTINCT FROM OLD.paid_at
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'payments may only transition from pending once';
+  END IF;
+
+  IF OLD.status <> 'pending' THEN
+    RAISE EXCEPTION 'payment state is terminal';
+  END IF;
+
+  IF NEW.status NOT IN ('confirmed', 'rejected', 'cancelled') THEN
+    RAISE EXCEPTION 'payments may only transition from pending once';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER payments_enforce_transition
+BEFORE UPDATE OR DELETE ON payments
+FOR EACH ROW EXECUTE FUNCTION enforce_payment_transition();
+
+CREATE OR REPLACE FUNCTION prevent_audit_event_rewrite()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'audit events are immutable';
+END;
+$$;
+
+CREATE TRIGGER audit_events_immutable
+BEFORE UPDATE OR DELETE ON audit_events
+FOR EACH ROW EXECUTE FUNCTION prevent_audit_event_rewrite();
+
+CREATE OR REPLACE FUNCTION enforce_idempotency_record_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'idempotency records cannot be deleted';
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.actor_membership_id IS DISTINCT FROM OLD.actor_membership_id
+     OR NEW.operation IS DISTINCT FROM OLD.operation
+     OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+     OR NEW.request_hash IS DISTINCT FROM OLD.request_hash
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'idempotency responses are immutable';
+  END IF;
+
+  IF OLD.completed_at IS NULL
+     AND NEW.completed_at IS NOT NULL
+     AND NEW.response_status IS NOT NULL
+     AND NEW.response_body IS NOT NULL
+  THEN
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'idempotency responses are immutable';
+END;
+$$;
+
+CREATE TRIGGER idempotency_records_enforce_lifecycle
+BEFORE UPDATE OR DELETE ON idempotency_records
+FOR EACH ROW EXECUTE FUNCTION enforce_idempotency_record_lifecycle();

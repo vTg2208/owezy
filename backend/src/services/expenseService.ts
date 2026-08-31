@@ -39,7 +39,7 @@ export interface LedgerPayment {
   payerMembershipId: string;
   payeeMembershipId: string;
   amountMinor: bigint;
-  status: 'pending' | 'confirmed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled';
 }
 
 export interface BalanceLedger {
@@ -98,6 +98,9 @@ const expenseInputSchema = z.object({
 
 function parseMajor(value: string | number, field: string): bigint {
   try {
+    if (typeof value === 'number' && (!Number.isFinite(value) || !Number.isSafeInteger(value))) {
+      throw new Error('unsafe number');
+    }
     return BigInt(majorToMinor(String(value)));
   } catch {
     throw new ServiceError(400, `${field} must be a positive amount with at most two decimal places`);
