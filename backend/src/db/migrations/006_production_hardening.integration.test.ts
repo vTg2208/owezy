@@ -250,6 +250,8 @@ runDatabaseTests('006_production_hardening upgrade', () => {
            'audit_events_entity_type_check',
            'audit_events_entity_id_check',
            'audit_events_metadata_check',
+           'idempotency_records_pkey',
+           'audit_events_pkey',
            'trips_id_currency_key'
          )
        ORDER BY conname
@@ -259,6 +261,7 @@ runDatabaseTests('006_production_hardening upgrade', () => {
       { conname: 'audit_events_entity_id_check' },
       { conname: 'audit_events_entity_type_check' },
       { conname: 'audit_events_metadata_check' },
+      { conname: 'audit_events_pkey' },
       { conname: 'expenses_expense_key_check' },
       { conname: 'expenses_status_check' },
       { conname: 'expenses_trip_currency_fkey' },
@@ -268,6 +271,7 @@ runDatabaseTests('006_production_hardening upgrade', () => {
       { conname: 'idempotency_records_completion_check' },
       { conname: 'idempotency_records_idempotency_key_check' },
       { conname: 'idempotency_records_operation_check' },
+      { conname: 'idempotency_records_pkey' },
       { conname: 'idempotency_records_request_hash_check' },
       { conname: 'idempotency_records_response_status_check' },
       { conname: 'payments_cancelled_by_membership_fkey' },

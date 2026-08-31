@@ -179,11 +179,35 @@ describe('ExpenseService', () => {
     ]);
   });
 
+  it('preserves 10.29 as exactly 1029 minor units from JSON input', async () => {
+    const repository = new MemoryExpenseRepository();
+
+    await service(repository).createExpense('user-a', 'trip-1', {
+      description: 'Snack', amount: 10.29,
+      splitType: 'equal', splits: [{ participantId: 'member-a', amount: 0 }],
+    });
+
+    expect(repository.expenses[0]).toMatchObject({ totalMinor: 1029n });
+  });
+
   it('rejects an unsafe JSON number before it can be rounded into a different amount', async () => {
     const repository = new MemoryExpenseRepository();
 
     await expect(service(repository).createExpense('user-a', 'trip-1', {
       description: 'Rounded booking', amount: 90071992547409.93,
+      splitType: 'equal', splits: [{ participantId: 'member-a', amount: 0 }],
+    })).rejects.toMatchObject({
+      status: 400,
+      message: 'amount must be a positive amount with at most two decimal places',
+    });
+    expect(repository.expenses).toEqual([]);
+  });
+
+  it('rejects a rounded JSON number even when its rounded magnitude is below the bound', async () => {
+    const repository = new MemoryExpenseRepository();
+
+    await expect(service(repository).createExpense('user-a', 'trip-1', {
+      description: 'Rounded booking', amount: 90071992547409.87,
       splitType: 'equal', splits: [{ participantId: 'member-a', amount: 0 }],
     })).rejects.toMatchObject({
       status: 400,

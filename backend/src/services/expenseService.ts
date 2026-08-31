@@ -100,14 +100,20 @@ function parseMajor(value: string | number, field: string): bigint {
   try {
     if (typeof value === 'number') {
       const text = String(value);
+      const scaled = value * 100;
+      const rounded = Math.round(scaled);
+      const floatingError = Number.EPSILON * Math.max(1, Math.abs(scaled));
       if (
         !Number.isFinite(value)
-        || value > Number.MAX_SAFE_INTEGER / 100
+        || value > Math.floor(Number.MAX_SAFE_INTEGER / 100)
         || !/^\d+(?:\.\d{1,2})?$/.test(text)
+        || !Number.isSafeInteger(rounded)
+        || Math.abs(scaled - rounded) > floatingError
+        || rounded <= 0
       ) {
         throw new Error('unsafe number');
       }
-      return majorToMinor(text);
+      return BigInt(rounded);
     }
     return majorToMinor(value);
   } catch {
