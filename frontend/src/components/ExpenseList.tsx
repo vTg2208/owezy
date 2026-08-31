@@ -25,6 +25,7 @@ export default function ExpenseList({
   const [amount, setAmount] = useState('');
   const [error, setError] = useState('');
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [busyExpense, setBusyExpense] = useState<string>();
   const receiptUrls = useRef<ReceiptObjectUrlLifecycle>();
   const receiptTrigger = useRef<HTMLButtonElement | null>(null);
   const closeButton = useRef<HTMLButtonElement | null>(null);
@@ -69,26 +70,32 @@ export default function ExpenseList({
 
   const correct = async (expense: Expense) => {
     setError('');
+    setBusyExpense(expense.id);
     try {
       await api.correctExpense(tripId, expense.id, expense.version ?? 1, {
         description, amount, splitType: 'equal',
         splits: buildEqualSplits(amount, participants.map((participant) => participant.id)),
       });
-      setEditing(undefined);
       await onChanged();
+      setEditing(undefined);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Failed to correct expense');
+    } finally {
+      setBusyExpense(undefined);
     }
   };
 
   const voidExpense = async (expense: Expense) => {
     setError('');
+    setBusyExpense(expense.id);
     try {
       await api.voidExpense(tripId, expense.id, expense.version ?? 1);
-      setConfirmVoid(undefined);
       await onChanged();
+      setConfirmVoid(undefined);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Failed to void expense');
+    } finally {
+      setBusyExpense(undefined);
     }
   };
 
@@ -114,13 +121,13 @@ export default function ExpenseList({
               <div className="mt-4 grid gap-3 rounded-lg bg-gray-50 p-3">
                 <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} className="block w-full border rounded px-3 py-2" /></label>
                 <label>Amount (₹)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" className="block w-full border rounded px-3 py-2" /></label>
-                <div className="flex gap-2"><button type="button" onClick={() => void correct(expense)} className="px-4 py-2 bg-indigo-700 text-white rounded">Save correction</button><button type="button" onClick={() => setEditing(undefined)}>Cancel</button></div>
+                <div className="flex gap-2"><button type="button" disabled={busyExpense === expense.id} onClick={() => void correct(expense)} className="px-4 py-2 bg-indigo-700 text-white rounded disabled:opacity-50">{busyExpense === expense.id ? 'Saving…' : 'Save correction'}</button><button type="button" disabled={busyExpense === expense.id} onClick={() => setEditing(undefined)}>Cancel</button></div>
               </div>
             )}
             {confirmVoid === expense.id && (
               <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
                 <p>Void this expense? The historical row will remain in the audit trail.</p>
-                <div className="mt-2 flex gap-2"><button type="button" onClick={() => void voidExpense(expense)} className="px-4 py-2 bg-red-700 text-white rounded">Confirm void</button><button type="button" onClick={() => setConfirmVoid(undefined)}>Keep expense</button></div>
+                <div className="mt-2 flex gap-2"><button type="button" disabled={busyExpense === expense.id} onClick={() => void voidExpense(expense)} className="px-4 py-2 bg-red-700 text-white rounded disabled:opacity-50">{busyExpense === expense.id ? 'Voiding…' : 'Confirm void'}</button><button type="button" disabled={busyExpense === expense.id} onClick={() => setConfirmVoid(undefined)}>Keep expense</button></div>
               </div>
             )}
           </article>

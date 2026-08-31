@@ -3,13 +3,12 @@ import { Participant } from '../types';
 interface ParticipantListProps {
   participants: Participant[];
   isAdmin: boolean;
-  isLocked: boolean;
   currentUserId: string;
   ownerId: string;
   onRemove: (memberId: string) => void;
 }
 
-export default function ParticipantList({ participants, isAdmin, isLocked, currentUserId, ownerId, onRemove }: ParticipantListProps) {
+export default function ParticipantList({ participants, isAdmin, currentUserId, ownerId, onRemove }: ParticipantListProps) {
   return (
     <div>
       <h3 className="font-semibold text-gray-700 mb-3 text-base sm:text-lg">
@@ -22,7 +21,7 @@ export default function ParticipantList({ participants, isAdmin, isLocked, curre
             className="bg-indigo-50 text-indigo-700 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full flex items-center gap-2 text-sm sm:text-base"
           >
             <span>{participant.name}</span>
-            {isAdmin && !isLocked && participant.id !== currentUserId && participant.id !== ownerId && (
+            {isAdmin && participant.id !== currentUserId && participant.id !== ownerId && (
               <button
                 type="button"
                 onClick={() => onRemove(participant.id)}

@@ -13,9 +13,12 @@ interface AddExpenseProps {
   tripId: string;
   participants: Participant[];
   onExpenseAdded: () => void | Promise<void>;
+  receiptUploadsEnabled?: boolean;
 }
 
-export default function AddExpense({ tripId, participants, onExpenseAdded }: AddExpenseProps) {
+export default function AddExpense({
+  tripId, participants, onExpenseAdded, receiptUploadsEnabled = true,
+}: AddExpenseProps) {
   const allIds = participants.map((participant) => participant.id);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
@@ -126,10 +129,14 @@ export default function AddExpense({ tripId, participants, onExpenseAdded }: Add
             })}
           </fieldset>
         )}
-        <div>
-          <label htmlFor="receipt-file" className="block text-sm font-medium text-gray-700 mb-2">Receipt image (optional)</label>
-          <input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)} className="w-full px-4 py-3 border rounded-lg" />
-        </div>
+        {receiptUploadsEnabled ? (
+          <div>
+            <label htmlFor="receipt-file" className="block text-sm font-medium text-gray-700 mb-2">Receipt image (optional)</label>
+            <input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)} className="w-full px-4 py-3 border rounded-lg" />
+          </div>
+        ) : (
+          <p role="status" className="notice text-sm text-muted">Receipt uploads are unavailable for this deployment. You can still add and split expenses normally.</p>
+        )}
         <button type="submit" disabled={loading || selected.length === 0} className="w-full bg-indigo-600 text-white min-h-11 px-5 rounded-lg font-semibold disabled:opacity-50">
           {loading ? 'Adding…' : 'Add expense'}
         </button>

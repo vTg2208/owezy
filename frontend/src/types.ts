@@ -103,4 +103,7 @@ export interface TripSnapshot {
   current_member_id: string;
   balances: Balance[];
   settlements: Settlement[];
+  capabilities?: {
+    receipt_uploads: boolean;
+  };
 }

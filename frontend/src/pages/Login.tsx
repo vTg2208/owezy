@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { safeReturnTo } from '../utils/navigation';
@@ -9,10 +9,14 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [params] = useSearchParams();
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = safeReturnTo(location.state);
+
+  useEffect(() => {
+    if (user) navigate(returnTo, { replace: true });
+  }, [navigate, returnTo, user]);
 
   const perform = async (work: () => Promise<void>) => {
     setError('');

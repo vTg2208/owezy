@@ -28,6 +28,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [actionError, setActionError] = useState('');
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [busyAction, setBusyAction] = useState('');
 
   const loadPayments = useCallback(async () => {
     try { setPayments(await api.listPayments(tripId)); }
@@ -40,10 +41,12 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
     await Promise.all([refresh(), loadPayments()]);
   };
 
-  const mutation = async (work: () => Promise<unknown>) => {
+  const mutation = async (action: string, work: () => Promise<unknown>) => {
     setActionError('');
+    setBusyAction(action);
     try { await work(); await refreshAll(); }
     catch (failure) { setActionError(failure instanceof Error ? failure.message : 'Action failed'); }
+    finally { setBusyAction(''); }
   };
 
   if (loading && !snapshot) return <main className="min-h-screen grid place-items-center"><p role="status">Loading trip…</p></main>;
@@ -67,29 +70,36 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
     <main className="min-h-screen p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         <button type="button" onClick={() => navigate('/dashboard')} className="mb-4 min-h-11 px-3 rounded-lg bg-white shadow" aria-label="Back to dashboard">← Dashboard</button>
-        <header className="text-center mb-8">
+        <header className="trip-hero text-center mb-8">
           <p className="text-sm uppercase tracking-widest">Trip notebook</p>
           <h1 className="text-5xl md:text-7xl">{capitalizedName}</h1>
           <p className="font-mono text-xl mt-2">{trip.room_code} · {trip.currency ?? 'INR'}</p>
           <div className="flex flex-wrap justify-center gap-2 mt-5">
-            {isOwner && <button type="button" onClick={() => void mutation(() => trip.is_locked ? api.unlockRoom(tripId) : api.lockRoom(tripId))} className="px-4 py-2 bg-amber-700 text-white rounded-lg">{trip.is_locked ? 'Unlock trip' : 'Lock trip'}</button>}
+            {isOwner && <button type="button" disabled={Boolean(busyAction)} onClick={() => void mutation('room', () => trip.is_locked ? api.unlockRoom(tripId) : api.lockRoom(tripId))} className="px-4 py-2 bg-amber-700 text-white rounded-lg disabled:opacity-60">{busyAction === 'room' ? (trip.is_locked ? 'Opening room\u2026' : 'Closing room\u2026') : (trip.is_locked ? 'Open room' : 'Close room')}</button>}
             <button type="button" onClick={() => setConfirmLeave(true)} className="px-4 py-2 border border-red-300 text-red-800 rounded-lg">Leave trip</button>
           </div>
+          <p role="status" className="mt-3 text-sm">
+            {trip.is_locked
+              ? 'Room closed to new travellers. Existing travellers can keep adding expenses and settling balances.'
+              : 'Room open. New travellers can join by room code or private invitation.'}
+          </p>
           {confirmLeave && (
             <div className="mt-3 inline-block rounded-lg bg-red-50 border border-red-200 p-3 text-left">
               <p>Leave this trip? Your historical entries will remain.</p>
-              <div className="flex gap-2 mt-2"><button type="button" onClick={() => void mutation(async () => { await api.removeParticipant(tripId, currentMemberId); navigate('/dashboard'); })} className="px-3 py-2 bg-red-700 text-white rounded">Confirm leave</button><button type="button" onClick={() => setConfirmLeave(false)}>Stay</button></div>
+              <div className="flex gap-2 mt-2"><button type="button" disabled={busyAction === 'leave'} onClick={() => void mutation('leave', async () => { await api.removeParticipant(tripId, currentMemberId); navigate('/dashboard'); })} className="px-3 py-2 bg-red-700 text-white rounded disabled:opacity-60">{busyAction === 'leave' ? 'Leaving\u2026' : 'Confirm leave'}</button><button type="button" onClick={() => setConfirmLeave(false)}>Stay</button></div>
             </div>
           )}
         </header>
         {(error || actionError) && <p role="alert" className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-red-800">{actionError || error}</p>}
 
         <section className="bg-white rounded-2xl shadow p-5 mb-6">
-          <ParticipantList participants={participants} isAdmin={isOwner} isLocked={trip.is_locked === 1} currentUserId={currentMemberId} ownerId={trip.admin_id} onRemove={(memberId) => void mutation(() => api.removeParticipant(tripId, memberId))} />
-          {isOwner && <InvitePanel tripId={tripId} />}
+          <ParticipantList participants={participants} isAdmin={isOwner} currentUserId={currentMemberId} ownerId={trip.admin_id} onRemove={(memberId) => void mutation(`remove-${memberId}`, () => api.removeParticipant(tripId, memberId))} />
+          {isOwner && (trip.is_locked
+            ? <p role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">Open the room before creating a new invitation.</p>
+            : <InvitePanel tripId={tripId} />)}
         </section>
         <section className="bg-white rounded-2xl shadow p-5 mb-6">
-          <AddExpense tripId={tripId} participants={participants} onExpenseAdded={refreshAll} />
+          <AddExpense tripId={tripId} participants={participants} onExpenseAdded={refreshAll} receiptUploadsEnabled={snapshot.capabilities?.receipt_uploads ?? false} />
         </section>
 
         <section className="bg-white rounded-2xl shadow overflow-hidden">

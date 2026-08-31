@@ -47,7 +47,7 @@ export default function SettlementPlan({
                       tripId, item.to, item.amount.toFixed(2), 'Settlement',
                     ))}
                     className="px-4 py-2 bg-indigo-700 text-white rounded-lg disabled:opacity-50"
-                  >Record payment</button>
+                  >{busy === `create-${item.to}` ? 'Recording…' : 'Record payment'}</button>
                 )}
               </article>
             ))}
@@ -67,11 +67,11 @@ export default function SettlementPlan({
                 {payment.status === 'pending' && (
                   <div className="flex gap-2">
                     {payment.payee_membership_id === currentUserId && (<>
-                      <button type="button" onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'confirm'))} className="px-3 py-2 bg-green-700 text-white rounded-lg">Confirm</button>
-                      <button type="button" onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'reject'))} className="px-3 py-2 border rounded-lg">Reject</button>
+                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'confirm'))} className="px-3 py-2 bg-green-700 text-white rounded-lg disabled:opacity-50">{busy === payment.id ? 'Updating…' : 'Confirm'}</button>
+                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'reject'))} className="px-3 py-2 border rounded-lg disabled:opacity-50">Reject</button>
                     </>)}
                     {payment.payer_membership_id === currentUserId && (
-                      <button type="button" onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'cancel'))} className="px-3 py-2 border rounded-lg">Cancel</button>
+                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'cancel'))} className="px-3 py-2 border rounded-lg disabled:opacity-50">{busy === payment.id ? 'Updating…' : 'Cancel'}</button>
                     )}
                   </div>
                 )}

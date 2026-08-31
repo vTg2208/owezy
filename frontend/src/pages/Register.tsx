@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { safeReturnTo } from '../utils/navigation';
@@ -9,10 +9,14 @@ export default function Register() {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { register, loginWithGoogle } = useAuth();
+  const { register, loginWithGoogle, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = safeReturnTo(location.state);
+
+  useEffect(() => {
+    if (user) navigate(returnTo, { replace: true });
+  }, [navigate, returnTo, user]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();

@@ -5,7 +5,9 @@ import {
   signOut, 
   onAuthStateChanged,
   GoogleAuthProvider,
+  getRedirectResult,
   signInWithPopup,
+  signInWithRedirect,
   sendEmailVerification,
   updateProfile,
 } from 'firebase/auth';
@@ -36,6 +38,25 @@ const e2eUser: User = {
   id: 'e2e-user', email: 'traveller@example.com', name: 'Test Traveller', emailVerified: true,
 };
 
+const googleRedirectFallbackCodes = new Set([
+  'auth/internal-error',
+  'auth/operation-not-supported-in-this-environment',
+  'auth/popup-blocked',
+]);
+
+function firebaseErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    && typeof error.code === 'string' ? error.code : undefined;
+}
+
+async function sendVerificationWithRetry(firebaseUser: Parameters<typeof sendEmailVerification>[0]) {
+  try {
+    await sendEmailVerification(firebaseUser);
+  } catch {
+    await sendEmailVerification(firebaseUser);
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,13 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return undefined;
     }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // User is signed in
+      if (firebaseUser?.emailVerified) {
         try {
-          // We can try to get the name from the backend if we want to be sure,
-          // but for performance, we can rely on what we have or fetch lazily.
-          // For this hackathon, let's just set the user.
-          
+          await authAPI.syncUser(firebaseUser.email || '', firebaseUser.displayName || '');
           setUser({
             id: firebaseUser.uid,
             email: firebaseUser.email || '',
@@ -65,10 +82,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
         }
       } else {
-        // User is signed out
         setUser(null);
       }
       setIsLoading(false);
+    });
+
+    void getRedirectResult(auth).catch((error) => {
+      console.error('Google redirect completion failed', error);
     });
 
     return () => unsubscribe();
@@ -79,8 +99,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     
     if (!userCredential.user.emailVerified) {
-      await signOut(auth);
-      throw new Error('Please verify your email before logging in.');
+      try {
+        await sendVerificationWithRetry(userCredential.user);
+      } catch {
+        throw new Error('Your email is not verified, and a new verification email could not be sent. Please try again.');
+      } finally {
+        await signOut(auth);
+        setUser(null);
+      }
+      throw new Error('Your email is not verified. A new verification email has been sent.');
     }
 
     // Sync with backend to ensure user exists (JIT provisioning)
@@ -90,7 +117,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginWithGoogle = async () => {
     if (e2eAuthEnabled) { setUser(e2eUser); return; }
     const provider = new GoogleAuthProvider();
-    const userCredential = await signInWithPopup(auth, provider);
+    let userCredential;
+    try {
+      userCredential = await signInWithPopup(auth, provider);
+    } catch (error) {
+      if (!googleRedirectFallbackCodes.has(firebaseErrorCode(error) ?? '')) throw error;
+      await signInWithRedirect(auth, provider);
+      return;
+    }
     // Sync with backend
     await authAPI.syncUser(userCredential.user.email!, userCredential.user.displayName || '');
   };
@@ -98,13 +132,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (email: string, password: string, name: string) => {
     if (e2eAuthEnabled) { setUser(null); return; }
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(userCredential.user, { displayName: name.trim() });
-    // Send verification email
-    await sendEmailVerification(userCredential.user);
-    
-    // Force logout so they can't access the app until verified
-    await signOut(auth);
-    setUser(null);
+    try {
+      await updateProfile(userCredential.user, { displayName: name.trim() });
+      try {
+        await sendVerificationWithRetry(userCredential.user);
+      } catch {
+        throw new Error('Your account was created, but the verification email could not be sent. Log in again to retry delivery.');
+      }
+    } finally {
+      await signOut(auth);
+      setUser(null);
+    }
   };
 
   const logout = async () => {

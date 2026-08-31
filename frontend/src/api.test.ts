@@ -2,6 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createRequestClient } from './api';
 
 describe('typed API request client', () => {
+  it('bypasses browser caches for authenticated reads', async () => {
+    let observed: RequestInit | undefined;
+    const client = createRequestClient({
+      baseUrl: '/api/v1',
+      getToken: async () => 'firebase-token',
+      fetcher: vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        observed = init;
+        return new Response(JSON.stringify({ trips: [] }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    });
+
+    await client.request('/auth/my-trips');
+
+    expect(observed?.cache).toBe('no-store');
+  });
+
   it('decodes structured failures with the server request ID', async () => {
     const client = createRequestClient({
       baseUrl: 'https://api.example/api/v1',

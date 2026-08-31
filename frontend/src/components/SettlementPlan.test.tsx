@@ -49,4 +49,22 @@ describe('SettlementPlan payment workflow', () => {
     expect(api.transitionPayment).toHaveBeenCalledWith('trip-1', 'payment-1', 'confirm');
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
   });
+
+  it('announces payment progress while fresh balances are loading', async () => {
+    const user = userEvent.setup();
+    let finishRefresh!: () => void;
+    const refreshed = new Promise<void>((resolve) => { finishRefresh = resolve; });
+    render(<SettlementPlan
+      tripId="trip-1"
+      currentUserId="payer"
+      settlement={[{ from: 'payer', to: 'payee', amount: 12.3, fromName: 'Payer', toName: 'Payee' }]}
+      payments={[]}
+      onChanged={() => refreshed}
+    />);
+
+    await user.click(screen.getByRole('button', { name: 'Record payment' }));
+
+    expect(screen.getByRole('button', { name: 'Recording…' })).toBeDisabled();
+    finishRefresh();
+  });
 });

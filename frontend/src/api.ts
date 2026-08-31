@@ -71,6 +71,7 @@ export function createRequestClient(options: RequestClientOptions) {
       }
       const response = await fetcher(`${options.baseUrl}${path}`, {
         method: requestOptions.method ?? 'GET',
+        cache: requestOptions.cache ?? ((requestOptions.method ?? 'GET') === 'GET' ? 'no-store' : undefined),
         credentials: 'omit',
         headers,
         body,
