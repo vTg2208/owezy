@@ -6,7 +6,8 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
-  sendEmailVerification
+  sendEmailVerification,
+  updateProfile,
 } from 'firebase/auth';
 import { auth } from '../firebase';
 import { authAPI } from '../api';
@@ -85,12 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = async (email: string, password: string, name: string) => {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    
+    await updateProfile(userCredential.user, { displayName: name.trim() });
     // Send verification email
     await sendEmailVerification(userCredential.user);
-
-    // Sync with backend to save the name
-    await authAPI.syncUser(email, name);
     
     // Force logout so they can't access the app until verified
     await signOut(auth);
@@ -100,7 +98,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     await signOut(auth);
     setUser(null);
-    localStorage.removeItem('currentTrip'); // Clear app state
   };
 
   const deleteAccount = async () => {
@@ -112,7 +109,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Sign out locally
     await signOut(auth);
     setUser(null);
-    localStorage.removeItem('currentTrip');
   };
 
   return (

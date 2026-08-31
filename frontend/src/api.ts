@@ -1,206 +1,210 @@
-// In production (Vercel), set VITE_API_URL environment variable to your backend URL (e.g., https://your-app.onrender.com/api)
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
 import { auth } from './firebase';
+import type {
+  AuditEvent,
+  ChatMessage,
+  Payment,
+  Trip,
+  TripSnapshot,
+} from './types';
 
-async function getAuthHeaders(contentType: string | null = 'application/json') {
-  const headers: Record<string, string> = {};
-  if (contentType) headers['Content-Type'] = contentType;
-  const user = auth.currentUser;
-  if (user) {
-    const token = await user.getIdToken();
-    headers['Authorization'] = `Bearer ${token}`;
+const configuredBase = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
+export const API_BASE = configuredBase.endsWith('/api') ? `${configuredBase}/v1` : configuredBase;
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string,
+    public readonly requestId?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
   }
-  return headers;
+}
+
+export interface RequestOptions extends Omit<RequestInit, 'body' | 'headers'> {
+  json?: unknown;
+  body?: BodyInit;
+  contentType?: string | null;
+  headers?: Record<string, string>;
+  idempotencyKey?: string;
+  timeoutMs?: number;
+}
+
+interface RequestClientOptions {
+  baseUrl: string;
+  getToken: () => Promise<string | undefined>;
+  fetcher?: typeof fetch;
+  timeoutMs?: number;
+}
+
+async function errorPayload(response: Response): Promise<{ code?: string; error?: string; message?: string }> {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+export function createRequestClient(options: RequestClientOptions) {
+  const fetcher = options.fetcher ?? fetch;
+  const defaultTimeout = options.timeoutMs ?? 15_000;
+  const request = async <T>(path: string, requestOptions: RequestOptions = {}): Promise<T> => {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(
+      () => controller.abort(new DOMException('Request timed out', 'TimeoutError')),
+      requestOptions.timeoutMs ?? defaultTimeout,
+    );
+    const abortFromCaller = () => controller.abort(requestOptions.signal?.reason);
+    requestOptions.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    try {
+      const token = await options.getToken();
+      const headers: Record<string, string> = { ...requestOptions.headers };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (requestOptions.idempotencyKey) headers['Idempotency-Key'] = requestOptions.idempotencyKey;
+      let body = requestOptions.body;
+      if (requestOptions.json !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify(requestOptions.json);
+      } else if (requestOptions.contentType) {
+        headers['Content-Type'] = requestOptions.contentType;
+      }
+      const response = await fetcher(`${options.baseUrl}${path}`, {
+        method: requestOptions.method ?? 'GET',
+        credentials: 'omit',
+        headers,
+        body,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const payload = await errorPayload(response);
+        throw new ApiError(
+          response.status,
+          payload.code ?? `HTTP_${response.status}`,
+          payload.error ?? payload.message ?? 'Request failed',
+          response.headers.get('x-request-id') ?? undefined,
+        );
+      }
+      if (response.status === 204) return undefined as T;
+      return await response.json() as T;
+    } finally {
+      globalThis.clearTimeout(timeout);
+      requestOptions.signal?.removeEventListener('abort', abortFromCaller);
+    }
+  };
+  return { request };
+}
+
+const client = createRequestClient({
+  baseUrl: API_BASE,
+  getToken: async () => auth.currentUser?.getIdToken(),
+});
+
+export const request = client.request;
+
+export function createIdempotencyKey(): string {
+  return crypto.randomUUID();
 }
 
 export const authAPI = {
-  syncUser: async (email: string, name: string) => {
-    const res = await fetch(`${API_BASE}/auth/sync`, {
-      method: 'POST',
-      headers: await getAuthHeaders(),
-      body: JSON.stringify({ email, name })
-    });
-    if (!res.ok) throw new Error('Failed to sync user');
-    return res.json();
-  },
-
-  getMyTrips: async () => {
-    const res = await fetch(`${API_BASE}/auth/my-trips`, {
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to fetch trips');
-    const data = await res.json();
-    return data.trips || [];
-  },
-
-  deleteAccount: async () => {
-    const res = await fetch(`${API_BASE}/auth/me`, {
-      method: 'DELETE',
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to delete account');
-    return res.json();
-  }
+  syncUser: async (_email?: string, _name?: string) => request<{ user: unknown }>('/auth/sync', {
+    method: 'POST', json: {},
+  }),
+  getMyTrips: async () => (await request<{ trips: Trip[] }>('/auth/my-trips')).trips ?? [],
+  deleteAccount: async () => request<{ success: true }>('/auth/me', { method: 'DELETE' }),
 };
 
+export interface ExpenseWrite {
+  description: string;
+  amount: string;
+  splitType: 'equal' | 'custom' | 'percentage';
+  splits: Array<{ participantId: string; amount: string }>;
+  receiptId?: string;
+}
+
 export const api = {
-  // Create a new trip
-  createTrip: async (tripName: string, adminName: string) => {
-    const res = await fetch(`${API_BASE}/trips`, {
-      method: 'POST',
-      headers: await getAuthHeaders(),
-      body: JSON.stringify({ tripName, adminName })
-    });
-    if (!res.ok) throw new Error('Failed to create trip');
-    return res.json();
-  },
-
-  // Join a trip
-  joinTrip: async (roomCode: string, memberName: string) => {
-    const res = await fetch(`${API_BASE}/trips/join`, {
-      method: 'POST',
-      headers: await getAuthHeaders(),
-      body: JSON.stringify({ roomCode, memberName })
-    });
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || 'Failed to join trip');
-    }
-    return res.json();
-  },
-
-  // Get trip details
-  getTrip: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}`, {
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to fetch trip');
-    return res.json();
-  },
-
-  // Lock room
-  lockRoom: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/lock`, {
-      method: 'POST',
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to lock room');
-    return res.json();
-  },
-
-  // Unlock room
-  unlockRoom: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/unlock`, {
-      method: 'POST',
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to unlock room');
-    return res.json();
-  },
-
-  // Remove participant
-  removeParticipant: async (tripId: string, memberId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/members/${memberId}`, {
-      method: 'DELETE',
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error(error.error || 'Failed to remove participant');
-    }
-    return res.json();
-  },
-
-  // Add expense
-  addExpense: async (tripId: string, data: { 
-    paidBy: string; 
-    description: string; 
-    amount: number;
-    splitType?: 'equal' | 'custom' | 'percentage';
-    splits?: { participantId: string; amount: number }[];
-    receiptId?: string;
-  }) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/expenses`, {
-      method: 'POST',
-      headers: await getAuthHeaders(),
-      body: JSON.stringify(data)
-    });
-    if (!res.ok) throw new Error('Failed to add expense');
-    return res.json();
-  },
-
-  uploadReceipt: async (tripId: string, file: File): Promise<{
-    receipt_id: string;
-    receipt_url: string;
-    content_type: string;
-    byte_size: number;
-    checksum_sha256: string;
-    status: 'pending';
-    pending_expires_at: string;
-  }> => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/receipts`, {
-      method: 'POST',
-      headers: await getAuthHeaders(file.type || 'application/octet-stream'),
-      body: file,
-    });
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error(error.error || 'Failed to upload receipt');
-    }
-    return res.json();
-  },
-
+  createTrip: (tripName: string, adminName: string) => request<{
+    tripId: string; roomCode: string; member: { id: string; name: string; isAdmin: true };
+  }>('/trips', { method: 'POST', json: { tripName, adminName } }),
+  joinTrip: (roomCode: string, memberName: string) => request<{
+    tripId: string; tripName: string; member: { id: string; name: string; isAdmin: boolean };
+  }>('/trips/join', { method: 'POST', json: { roomCode, memberName } }),
+  getTrip: (tripId: string, signal?: AbortSignal) => request<TripSnapshot>(`/trips/${tripId}`, { signal }),
+  lockRoom: (tripId: string) => request<{ success: true }>(`/trips/${tripId}/lock`, { method: 'POST' }),
+  unlockRoom: (tripId: string) => request<{ success: true }>(`/trips/${tripId}/unlock`, { method: 'POST' }),
+  removeParticipant: (tripId: string, memberId: string) => request<{ success: true }>(
+    `/trips/${tripId}/members/${memberId}`, { method: 'DELETE' },
+  ),
+  addExpense: (tripId: string, data: ExpenseWrite, idempotencyKey = createIdempotencyKey()) => request<{
+    expenseId: string; splitType: string; memberCount: number;
+  }>(`/trips/${tripId}/expenses`, { method: 'POST', json: data, idempotencyKey }),
+  correctExpense: (
+    tripId: string, expenseId: string, expectedVersion: number, data: ExpenseWrite,
+    idempotencyKey = createIdempotencyKey(),
+  ) => request(`/trips/${tripId}/expenses/${expenseId}/correct`, {
+    method: 'POST', json: { expectedVersion, ...data }, idempotencyKey,
+  }),
+  voidExpense: (
+    tripId: string, expenseId: string, expectedVersion: number,
+    idempotencyKey = createIdempotencyKey(),
+  ) => request(`/trips/${tripId}/expenses/${expenseId}/void`, {
+    method: 'POST', json: { expectedVersion }, idempotencyKey,
+  }),
+  uploadReceipt: (tripId: string, file: File) => request<{
+    receipt_id: string; receipt_url: string; content_type: string; byte_size: number;
+    checksum_sha256: string; status: 'pending'; pending_expires_at: string;
+  }>(`/trips/${tripId}/receipts`, {
+    method: 'POST', body: file, contentType: file.type || 'application/octet-stream',
+  }),
   readReceipt: async (receiptUrl: string, signal?: AbortSignal): Promise<Blob> => {
-    const normalizedBase = API_BASE.replace(/\/$/, '');
-    const url = receiptUrl.startsWith('/api/')
-      ? `${normalizedBase}${receiptUrl.slice('/api'.length)}`
-      : receiptUrl;
-    const res = await fetch(url, { headers: await getAuthHeaders(null), signal });
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error(error.error || 'Failed to load receipt');
+    const path = receiptUrl.startsWith('/api/') ? receiptUrl.slice('/api'.length) : receiptUrl;
+    const token = await auth.currentUser?.getIdToken();
+    const response = await fetch(path.startsWith('http') ? path : `${API_BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}, signal,
+    });
+    if (!response.ok) {
+      const payload = await errorPayload(response);
+      throw new ApiError(
+        response.status, payload.code ?? `HTTP_${response.status}`,
+        payload.error ?? 'Failed to load receipt', response.headers.get('x-request-id') ?? undefined,
+      );
     }
-    return res.blob();
+    return response.blob();
   },
-
-  // Get balances
-  getBalances: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/balances`, {
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to fetch balances');
-    const data = await res.json();
-    return data.balances || [];
-  },
-
-  // Get settlement
-  getSettlement: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/balances`, {
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to fetch settlement');
-    const data = await res.json();
-    return data.settlements || [];
-  },
-
-  // Send message
-  sendMessage: async (tripId: string, memberId: string, message: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/messages`, {
-      method: 'POST',
-      headers: await getAuthHeaders(),
-      body: JSON.stringify({ memberId, message })
-    });
-    if (!res.ok) throw new Error('Failed to send message');
-    return res.json();
-  },
-
-  // Get messages
-  getMessages: async (tripId: string) => {
-    const res = await fetch(`${API_BASE}/trips/${tripId}/messages`, {
-      headers: await getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Failed to fetch messages');
-    const data = await res.json();
-    return data.messages || [];
-  }
+  getBalances: async (tripId: string) => request<Pick<TripSnapshot, 'balances' | 'settlements'>>(
+    `/trips/${tripId}/balances`,
+  ),
+  createPayment: (
+    tripId: string, payeeMembershipId: string, amount: string, note?: string,
+    idempotencyKey = createIdempotencyKey(),
+  ) => request<Payment>(`/trips/${tripId}/payments`, {
+    method: 'POST', json: { payeeMembershipId, amount, note }, idempotencyKey,
+  }),
+  listPayments: async (tripId: string) => (await request<{ payments: Payment[] }>(
+    `/trips/${tripId}/payments`,
+  )).payments,
+  transitionPayment: (
+    tripId: string, paymentId: string, action: 'confirm' | 'reject' | 'cancel',
+    idempotencyKey = createIdempotencyKey(),
+  ) => request<Payment>(`/trips/${tripId}/payments/${paymentId}/${action}`, {
+    method: 'POST', json: {}, idempotencyKey,
+  }),
+  createInvite: (
+    tripId: string, email: string, expiresInHours = 168,
+    idempotencyKey = createIdempotencyKey(),
+  ) => request<{ inviteId: string; token: string; expiresInHours: number }>(
+    `/trips/${tripId}/invites`, { method: 'POST', json: { email, expiresInHours }, idempotencyKey },
+  ),
+  acceptInvite: (token: string, idempotencyKey = createIdempotencyKey()) => request<{
+    tripId: string; membershipId: string;
+  }>('/invites/accept', { method: 'POST', json: { token }, idempotencyKey }),
+  getAudit: async (tripId: string) => (await request<{ events: AuditEvent[] }>(
+    `/trips/${tripId}/audit`,
+  )).events,
+  sendMessage: (tripId: string, message: string) => request<{ messageId: string; success: true }>(
+    `/trips/${tripId}/messages`, { method: 'POST', json: { message } },
+  ),
+  getMessages: (tripId: string, cursor?: string, signal?: AbortSignal) => request<{
+    messages: ChatMessage[]; nextCursor?: string;
+  }>(`/trips/${tripId}/messages${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
 };

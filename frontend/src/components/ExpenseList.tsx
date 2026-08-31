@@ -1,107 +1,133 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { Expense } from '../types';
+import type { Expense, Participant } from '../types';
 import { ReceiptObjectUrlLifecycle } from '../utils/receiptObjectUrl';
+import { buildEqualSplits } from '../utils/splitBuilder';
 
 interface ExpenseListProps {
+  tripId: string;
   expenses: Expense[];
+  participants: Participant[];
+  currentUserId: string;
+  ownerId: string;
+  onChanged: () => void | Promise<void>;
 }
 
-export default function ExpenseList({ expenses }: ExpenseListProps) {
+export default function ExpenseList({
+  tripId, expenses, participants, currentUserId, ownerId, onChanged,
+}: ExpenseListProps) {
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
-  const receiptUrls = useRef<ReceiptObjectUrlLifecycle | null>(null);
+  const [editing, setEditing] = useState<string>();
+  const [confirmVoid, setConfirmVoid] = useState<string>();
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [error, setError] = useState('');
+  const receiptUrls = useRef<ReceiptObjectUrlLifecycle>();
+  const receiptTrigger = useRef<HTMLButtonElement | null>(null);
+  const closeButton = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const lifecycle = new ReceiptObjectUrlLifecycle();
     receiptUrls.current = lifecycle;
-    return () => {
-      lifecycle.dispose();
-      if (receiptUrls.current === lifecycle) receiptUrls.current = null;
-    };
+    return () => lifecycle.dispose();
   }, []);
+
+  useEffect(() => {
+    if (!viewingReceipt) return;
+    closeButton.current?.focus();
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') closeReceipt(); };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [viewingReceipt]);
 
   const closeReceipt = () => {
     receiptUrls.current?.close();
     setViewingReceipt(null);
+    requestAnimationFrame(() => receiptTrigger.current?.focus());
   };
 
-  const viewReceipt = async (receiptUrl: string) => {
+  const viewReceipt = async (receiptUrl: string, trigger: HTMLButtonElement) => {
+    receiptTrigger.current = trigger;
+    setError('');
     try {
-      const objectUrl = await receiptUrls.current?.load(
-        (signal) => api.readReceipt(receiptUrl, signal),
-      );
+      const objectUrl = await receiptUrls.current?.load((signal) => api.readReceipt(receiptUrl, signal));
       if (objectUrl) setViewingReceipt(objectUrl);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to load receipt');
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Failed to load receipt');
     }
   };
 
-  if (expenses.length === 0) {
-    return (
-      <div className="text-center text-gray-500 py-8">
-        No expenses yet. Add your first expense above!
-      </div>
-    );
-  }
+  const beginCorrection = (expense: Expense) => {
+    setEditing(expense.id);
+    setDescription(expense.description);
+    setAmount(expense.amount.toFixed(2));
+    setConfirmVoid(undefined);
+  };
+
+  const correct = async (expense: Expense) => {
+    setError('');
+    try {
+      await api.correctExpense(tripId, expense.id, expense.version ?? 1, {
+        description, amount, splitType: 'equal',
+        splits: buildEqualSplits(amount, participants.map((participant) => participant.id)),
+      });
+      setEditing(undefined);
+      await onChanged();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Failed to correct expense');
+    }
+  };
+
+  const voidExpense = async (expense: Expense) => {
+    setError('');
+    try {
+      await api.voidExpense(tripId, expense.id, expense.version ?? 1);
+      setConfirmVoid(undefined);
+      await onChanged();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Failed to void expense');
+    }
+  };
+
+  if (expenses.length === 0) return <p className="text-center text-gray-500 py-8">No expenses yet.</p>;
 
   return (
-    <div className="space-y-3 sm:space-y-4">
-      {expenses.map((expense) => (
-        <div key={expense.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 hover:shadow-md transition">
-          <div className="flex justify-between items-start mb-2 gap-2">
-            <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-base sm:text-lg text-gray-800 truncate">{expense.description}</h3>
-              <p className="text-xs sm:text-sm text-gray-600">
-                Paid by <span className="font-medium">{expense.paid_by_name}</span>
-              </p>
+    <div className="space-y-4">
+      {error && <p role="alert" className="text-red-700">{error}</p>}
+      {expenses.map((expense) => {
+        const canChange = expense.paid_by === currentUserId || ownerId === currentUserId;
+        return (
+          <article key={expense.id} className="border rounded-lg p-4">
+            <div className="flex justify-between gap-3">
+              <div><h3 className="font-semibold text-lg">{expense.description}</h3><p className="text-sm text-gray-600">Paid by {expense.paid_by_name}</p></div>
+              <div className="text-right"><p className="text-2xl font-bold text-indigo-700">₹{expense.amount.toFixed(2)}</p><p className="text-xs capitalize">{expense.split_type} split · v{expense.version ?? 1}</p></div>
             </div>
-            <div className="text-right flex-shrink-0">
-              <div className="text-lg sm:text-2xl font-bold text-indigo-600">₹{expense.amount.toFixed(2)}</div>
-              <div className="text-xs text-gray-500 capitalize">{expense.split_type} split</div>
+            <div className="mt-3 flex flex-wrap gap-3">
+              {expense.receipt_url && <button type="button" onClick={(event) => void viewReceipt(expense.receipt_url!, event.currentTarget)} className="text-indigo-700 underline">View receipt</button>}
+              {canChange && <button type="button" onClick={() => beginCorrection(expense)} className="text-indigo-700 underline">Correct</button>}
+              {canChange && <button type="button" onClick={() => { setConfirmVoid(expense.id); setEditing(undefined); }} className="text-red-700 underline">Void</button>}
             </div>
-          </div>
-
-          {expense.receipt_url && (
-            <div className="mt-2">
-              <button 
-                onClick={() => void viewReceipt(expense.receipt_url!)}
-                className="text-xs sm:text-sm text-indigo-600 hover:text-indigo-800 underline flex items-center gap-1"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                View Receipt
-              </button>
-            </div>
-          )}
-          
-          <div className="mt-2 text-xs text-gray-400">
-            {new Date(expense.created_at).toLocaleString()}
-          </div>
-        </div>
-      ))}
-
-      {/* Receipt Modal */}
+            {editing === expense.id && (
+              <div className="mt-4 grid gap-3 rounded-lg bg-gray-50 p-3">
+                <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} className="block w-full border rounded px-3 py-2" /></label>
+                <label>Amount (₹)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" className="block w-full border rounded px-3 py-2" /></label>
+                <div className="flex gap-2"><button type="button" onClick={() => void correct(expense)} className="px-4 py-2 bg-indigo-700 text-white rounded">Save correction</button><button type="button" onClick={() => setEditing(undefined)}>Cancel</button></div>
+              </div>
+            )}
+            {confirmVoid === expense.id && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+                <p>Void this expense? The historical row will remain in the audit trail.</p>
+                <div className="mt-2 flex gap-2"><button type="button" onClick={() => void voidExpense(expense)} className="px-4 py-2 bg-red-700 text-white rounded">Confirm void</button><button type="button" onClick={() => setConfirmVoid(undefined)}>Keep expense</button></div>
+              </div>
+            )}
+          </article>
+        );
+      })}
       {viewingReceipt && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4"
-          onClick={closeReceipt}
-        >
-          <div className="relative max-w-4xl max-h-[90vh] w-full flex items-center justify-center">
-            <button
-              onClick={closeReceipt}
-              className="absolute -top-10 right-0 text-white hover:text-gray-300 p-2"
-            >
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-            <img 
-              src={viewingReceipt} 
-              alt="Receipt" 
-              className="max-w-full max-h-[85vh] object-contain rounded-lg bg-white"
-              onClick={(e) => e.stopPropagation()} 
-            />
+        <div role="dialog" aria-modal="true" aria-label="Receipt preview" className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeReceipt(); }}>
+          <div className="relative max-w-4xl max-h-[90vh]">
+            <button ref={closeButton} type="button" onClick={closeReceipt} aria-label="Close receipt preview" className="absolute right-0 -top-12 min-h-11 min-w-11 text-white text-3xl">×</button>
+            <img src={viewingReceipt} alt="Uploaded receipt" className="max-w-full max-h-[85vh] object-contain rounded-lg bg-white" />
           </div>
         </div>
       )}

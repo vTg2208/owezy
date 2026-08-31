@@ -1,115 +1,81 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { ChatMessage, Participant } from '../types';
+import type { ChatMessage } from '../types';
 
-interface ChatProps {
-  tripId: string;
-  currentUserId: string;
-  participants: Participant[];
+interface ChatProps { tripId: string; currentUserId: string }
+
+function chronological(messages: ChatMessage[]) {
+  return [...new Map(messages.map((message) => [message.id, message])).values()]
+    .sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id));
 }
 
 export default function Chat({ tripId, currentUserId }: ChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [nextCursor, setNextCursor] = useState<string>();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const end = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const fetchMessages = async (shouldScroll = false) => {
-    try {
-      const msgs = await api.getMessages(tripId);
-      setMessages(msgs);
-      if (shouldScroll) {
-        setTimeout(scrollToBottom, 100);
-      }
-    } catch (error) {
-      console.error('Error fetching messages:', error);
-    }
-  };
-
-  useEffect(() => {
-    fetchMessages(true);
-
-    // Poll for new messages every 5 seconds
-    const interval = setInterval(fetchMessages, 5000);
-    return () => clearInterval(interval);
+  const load = useCallback(async (cursor?: string) => {
+    const page = await api.getMessages(tripId, cursor);
+    setMessages((current) => chronological(cursor ? [...page.messages, ...current] : page.messages));
+    setNextCursor(page.nextCursor);
   }, [tripId]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || loading) return;
+  useEffect(() => {
+    const controller = new AbortController();
+    api.getMessages(tripId, undefined, controller.signal).then((page) => {
+      setMessages(chronological(page.messages));
+      setNextCursor(page.nextCursor);
+      requestAnimationFrame(() => end.current?.scrollIntoView());
+    }).catch((failure: unknown) => {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Failed to load chat');
+    });
+    return () => controller.abort();
+  }, [tripId]);
 
-    setLoading(true);
+  const send = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    setError('');
     try {
-      await api.sendMessage(tripId, currentUserId, newMessage.trim());
-      setNewMessage('');
-      await fetchMessages(true);
-    } catch (error) {
-      console.error('Error sending message:', error);
+      await api.sendMessage(tripId, draft.trim());
+      setDraft('');
+      await load();
+      requestAnimationFrame(() => end.current?.scrollIntoView({ behavior: 'smooth' }));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Failed to send message');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px] chat-container">
-      {/* Messages Area */}
+    <section aria-label="Trip chat" className="flex flex-col h-[32rem]">
+      {error && <p role="alert" className="mb-3 text-red-700">{error}</p>}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50 rounded-lg">
-        {messages.length === 0 ? (
-          <div className="text-center text-gray-400 mt-8">
-            No messages yet. Start the conversation!
-          </div>
-        ) : (
-          messages.map((msg) => {
-            const isCurrentUser = msg.member_id === currentUserId;
-            return (
-              <div
-                key={msg.id}
-                className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-xs md:max-w-md px-4 py-2 rounded-2xl chat-message ${
-                    isCurrentUser
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-white text-gray-800 shadow-sm'
-                  }`}
-                >
-                  {!isCurrentUser && (
-                    <div className="text-xs font-semibold mb-1 opacity-75">
-                      {msg.member_name}
-                    </div>
-                  )}
-                  <div className="break-words">{msg.message}</div>
-                </div>
+        {nextCursor && <button type="button" onClick={() => void load(nextCursor)} className="block mx-auto px-4 py-2 text-indigo-700">Load older messages</button>}
+        {messages.length === 0 && <p className="text-center text-gray-500">No messages yet. Start the conversation.</p>}
+        {messages.map((message) => {
+          const mine = message.member_id === currentUserId;
+          return (
+            <article key={message.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-md px-4 py-2 rounded-2xl ${mine ? 'bg-indigo-700 text-white' : 'bg-white text-gray-900 shadow-sm'}`}>
+                {!mine && <p className="text-xs font-semibold opacity-75">{message.member_name}</p>}
+                <p className="break-words">{message.message}</p>
               </div>
-            );
-          })
-        )}
-        <div ref={messagesEndRef} />
+            </article>
+          );
+        })}
+        <div ref={end} />
       </div>
-
-      {/* Input Area */}
-      <form onSubmit={handleSendMessage} className="mt-4 flex gap-2">
-        <input
-          type="text"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type a message..."
-          className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          disabled={loading}
-          maxLength={500}
-        />
-        <button
-          type="submit"
-          disabled={!newMessage.trim() || loading}
-          className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
-        >
-          {loading ? 'Sending...' : 'Send'}
-        </button>
+      <form onSubmit={send} className="mt-4 flex gap-2">
+        <label htmlFor="chat-message" className="sr-only">Message</label>
+        <input id="chat-message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={500} disabled={busy} className="flex-1 px-4 py-3 border rounded-lg" placeholder="Write a message" />
+        <button type="submit" disabled={!draft.trim() || busy} className="px-6 py-3 bg-indigo-700 text-white rounded-lg disabled:opacity-50">{busy ? 'Sending…' : 'Send'}</button>
       </form>
-    </div>
+    </section>
   );
 }

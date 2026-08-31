@@ -92,7 +92,6 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mb-3">Created {new Date(trip.created_at).toLocaleDateString()}</p>
                   <Link
                     to={`/trip/${trip.id}`}
-                    state={{ participantId: trip.member_id }}
                     className="block text-center px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
                   >
                     Open Trip

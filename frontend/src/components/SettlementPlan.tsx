@@ -1,91 +1,85 @@
-import { Settlement } from '../types';
+import { useState } from 'react';
+import { api } from '../api';
+import type { Payment, Settlement } from '../types';
 
 interface SettlementPlanProps {
+  tripId: string;
   settlement: Settlement[];
+  payments: Payment[];
   currentUserId: string;
+  onChanged: () => void | Promise<void>;
 }
 
-export default function SettlementPlan({ settlement, currentUserId }: SettlementPlanProps) {
-  // Filter settlements to show only those involving the current user
-  const userSettlements = settlement.filter(
-    txn => txn.from === currentUserId || txn.to === currentUserId
-  );
+export default function SettlementPlan({
+  tripId, settlement, payments, currentUserId, onChanged,
+}: SettlementPlanProps) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const relevant = settlement.filter((item) => item.from === currentUserId || item.to === currentUserId);
+  const myPayments = payments.filter((payment) => (
+    payment.payer_membership_id === currentUserId || payment.payee_membership_id === currentUserId
+  ));
 
-  if (userSettlements.length === 0) {
-    return (
-      <div className="text-center py-8">
-        <div className="text-6xl mb-4 text-green-600">✓</div>
-        <div className="text-xl font-semibold text-green-600">You're all settled!</div>
-        <div className="text-gray-600 mt-2">No pending transactions for you.</div>
-      </div>
-    );
-  }
-
-  // Separate into what user owes and what user receives
-  const userOwes = userSettlements.filter(txn => txn.from === currentUserId);
-  const userReceives = userSettlements.filter(txn => txn.to === currentUserId);
+  const mutate = async (key: string, work: () => Promise<unknown>) => {
+    setBusy(key);
+    setError('');
+    try { await work(); await onChanged(); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : 'Payment action failed'); }
+    finally { setBusy(''); }
+  };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {userOwes.length > 0 && (
-        <div>
-          <h3 className="text-base sm:text-lg font-semibold text-red-600 mb-2 sm:mb-3">You Need to Pay:</h3>
-          <div className="space-y-2 sm:space-y-3">
-            {userOwes.map((txn, index) => (
-              <div
-                key={index}
-                className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200"
-              >
-                <div className="flex-1 w-full sm:w-auto">
-                  <div className="font-semibold text-gray-800 text-sm sm:text-base">You pay</div>
-                </div>
-                
-                <div className="text-center px-3 sm:px-4 py-2 bg-white rounded-lg shadow w-full sm:w-auto">
-                  <div className="text-xl sm:text-2xl font-bold text-red-600">₹{txn.amount.toFixed(2)}</div>
-                </div>
-                
-                <div className="flex-1 text-left sm:text-right w-full sm:w-auto">
-                  <div className="text-xs sm:text-sm text-gray-600">to</div>
-                  <div className="font-semibold text-gray-800 text-sm sm:text-base">{txn.toName}</div>
-                </div>
-              </div>
+    <div className="space-y-6">
+      {error && <p role="alert" className="text-red-700">{error}</p>}
+      <section aria-labelledby="suggested-settlements">
+        <h3 id="suggested-settlements" className="text-lg font-semibold mb-3">Suggested settlements</h3>
+        {relevant.length === 0 ? <p className="text-green-700">You’re all settled.</p> : (
+          <div className="space-y-3">
+            {relevant.map((item) => (
+              <article key={`${item.from}-${item.to}`} className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-4">
+                <p><strong>{item.from === currentUserId ? 'You' : item.fromName}</strong> pay <strong>{item.to === currentUserId ? 'you' : item.toName}</strong></p>
+                <p className="text-xl font-bold">₹{item.amount.toFixed(2)}</p>
+                {item.from === currentUserId && (
+                  <button
+                    type="button"
+                    disabled={Boolean(busy)}
+                    onClick={() => void mutate(`create-${item.to}`, () => api.createPayment(
+                      tripId, item.to, item.amount.toFixed(2), 'Settlement',
+                    ))}
+                    className="px-4 py-2 bg-indigo-700 text-white rounded-lg disabled:opacity-50"
+                  >Record payment</button>
+                )}
+              </article>
             ))}
           </div>
-        </div>
-      )}
-
-      {userReceives.length > 0 && (
-        <div>
-          <h3 className="text-base sm:text-lg font-semibold text-green-600 mb-2 sm:mb-3">You Will Receive:</h3>
-          <div className="space-y-2 sm:space-y-3">
-            {userReceives.map((txn, index) => (
-              <div
-                key={index}
-                className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200"
-              >
-                <div className="flex-1 w-full sm:w-auto">
-                  <div className="font-semibold text-gray-800 text-sm sm:text-base">{txn.fromName}</div>
-                  <div className="text-xs sm:text-sm text-gray-600">pays you</div>
+        )}
+      </section>
+      <section aria-labelledby="payment-history">
+        <h3 id="payment-history" className="text-lg font-semibold mb-3">Payment requests</h3>
+        {myPayments.length === 0 ? <p className="text-gray-600">No payments recorded yet.</p> : (
+          <div className="space-y-3">
+            {myPayments.map((payment) => (
+              <article key={payment.id} className="border rounded-lg p-4 flex flex-wrap justify-between gap-3">
+                <div>
+                  <p className="font-semibold">₹{payment.amount ?? '—'} {payment.currency ?? 'INR'}</p>
+                  <p className="text-sm capitalize">{payment.status}</p>
                 </div>
-                
-                <div className="text-center px-3 sm:px-4 py-2 bg-white rounded-lg shadow w-full sm:w-auto">
-                  <div className="text-xl sm:text-2xl font-bold text-green-600">₹{txn.amount.toFixed(2)}</div>
-                </div>
-                
-                <div className="flex-1 text-left sm:text-right w-full sm:w-auto">
-                  <div className="text-xs sm:text-sm text-gray-600">receive</div>
-                </div>
-              </div>
+                {payment.status === 'pending' && (
+                  <div className="flex gap-2">
+                    {payment.payee_membership_id === currentUserId && (<>
+                      <button type="button" onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'confirm'))} className="px-3 py-2 bg-green-700 text-white rounded-lg">Confirm</button>
+                      <button type="button" onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'reject'))} className="px-3 py-2 border rounded-lg">Reject</button>
+                    </>)}
+                    {payment.payer_membership_id === currentUserId && (
+                      <button type="button" onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'cancel'))} className="px-3 py-2 border rounded-lg">Cancel</button>
+                    )}
+                  </div>
+                )}
+              </article>
             ))}
           </div>
-        </div>
-      )}
-      
-      <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <div className="text-sm text-blue-800">
-          <strong>Tip:</strong> Complete these transactions to settle all trip expenses efficiently!
-        </div>
-      </div>
+        )}
+      </section>
     </div>
   );
 }
