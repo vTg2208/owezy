@@ -18,10 +18,32 @@ async function checkHealth(app: ReturnType<typeof createApp>) {
 }
 
 describe('server lifecycle', () => {
+  it('returns a controlled 400 for a JSON primitive body', async () => {
+    const app = createApp({ database: { check: async () => undefined } });
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/trips`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'null',
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Invalid JSON request body' });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
   it('reports a current PostgreSQL query transition from ready to unavailable', async () => {
     let available = true;
     const database = {
-      query: async () => {
+      check: async () => {
         if (!available) throw new Error('connection refused: password=secret');
       },
     };
@@ -42,13 +64,30 @@ describe('server lifecycle', () => {
   });
 
   it('bounds a stalled PostgreSQL health query', async () => {
+    let activeChecks = 0;
+    let observedTimeout = 0;
     const stalled = await checkHealth(createApp({
-      database: { query: async () => new Promise(() => undefined) },
+      database: {
+        async check(timeoutMs) {
+          observedTimeout = timeoutMs;
+          activeChecks += 1;
+          try {
+            await new Promise((_, reject) => setTimeout(
+              () => reject(new Error('query timeout')),
+              timeoutMs,
+            ));
+          } finally {
+            activeChecks -= 1;
+          }
+        },
+      },
       healthCheckTimeoutMs: 20,
     }));
 
     expect(stalled.status).toBe(503);
     expect(await stalled.json()).toMatchObject({ status: 'unavailable' });
+    expect(observedTimeout).toBe(20);
+    expect(activeChecks).toBe(0);
   });
 
   it('closes PostgreSQL and leaves no listener after HTTP listen fails', async () => {
@@ -91,13 +130,16 @@ describe('server lifecycle', () => {
 
   it('does not listen when PostgreSQL initialization fails', async () => {
     let listened = false;
+    let closeDatabaseCalls = 0;
 
     await expect(startServer({
       initializeDatabase: async () => { throw new Error('DATABASE_URL is required'); },
       listen: async () => { listened = true; return { close: () => undefined }; },
+      closeDatabase: async () => { closeDatabaseCalls += 1; },
     })).rejects.toThrow('DATABASE_URL is required');
 
     expect(listened).toBe(false);
+    expect(closeDatabaseCalls).toBe(1);
   });
 
   it('closes the HTTP server and PostgreSQL pool once when shutdown is requested repeatedly', async () => {

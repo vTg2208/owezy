@@ -307,11 +307,18 @@ export function transformLegacySnapshot(snapshot: LegacySnapshot): MigrationPlan
   for (const { id, document } of uniqueTrips) {
     const ownerMembershipId = legacyId(document.admin_id);
     const owner = ownerMembershipId ? rawMembers.get(ownerMembershipId) : undefined;
+    const ownerLegacyUserId = owner ? legacyId(owner.user_id) : null;
     const name = typeof document.name === 'string' ? document.name.trim() : '';
     const roomCode = typeof document.room_code === 'string' ? document.room_code.trim().toUpperCase() : '';
     const createdAt = validDate(document.created_at);
     const updatedAt = validDate(document.updated_at ?? document.created_at);
-    if (!ownerMembershipId || !owner || legacyId(owner.trip_id) !== id) {
+    if (
+      !ownerMembershipId
+      || !owner
+      || legacyId(owner.trip_id) !== id
+      || !ownerLegacyUserId
+      || !usersByLegacyId.has(ownerLegacyUserId)
+    ) {
       issues.push({
         code: 'orphan_trip_owner', entity: 'trip', legacyId: id,
         message: 'Trip owner membership is missing or belongs to another trip',
@@ -684,13 +691,28 @@ async function upsertMapping(
   database: QueryExecutor,
   mapping: LegacyMapping,
 ): Promise<void> {
-  await database.query(
+  const inserted = await database.query(
     `INSERT INTO legacy_id_mappings (entity_type, legacy_id, postgres_id)
      VALUES ($1, $2, $3)
      ON CONFLICT (entity_type, legacy_id)
-     DO UPDATE SET postgres_id = EXCLUDED.postgres_id, migrated_at = now()`,
+     DO NOTHING
+     RETURNING postgres_id`,
     [mapping.entityType, mapping.legacyId, mapping.postgresId],
   );
+  if (inserted.rowCount === 1) return;
+
+  const existing = await database.query(
+    `SELECT postgres_id
+       FROM legacy_id_mappings
+      WHERE entity_type = $1 AND legacy_id = $2`,
+    [mapping.entityType, mapping.legacyId],
+  );
+  const actual = existing.rows[0]?.postgres_id;
+  if (String(actual) !== mapping.postgresId) {
+    throw new Error(
+      `${mapping.entityType} mapping identity mismatch for ${mapping.legacyId}: expected ${mapping.postgresId}, found ${String(actual)}`,
+    );
+  }
 }
 
 export class MigrationReceiptCleanupError extends Error {
@@ -722,6 +744,12 @@ function receiptBytesMatch(bytes: Buffer, receipt: MigratedReceipt): boolean {
     && bytes.equals(receipt.bytes);
 }
 
+function sameInstant(value: unknown, expected: Date): boolean {
+  return value instanceof Date
+    ? value.getTime() === expected.getTime()
+    : new Date(String(value)).getTime() === expected.getTime();
+}
+
 export class PostgresMigrationTarget implements MigrationTarget {
   constructor(
     private readonly database: QueryExecutor = defaultDatabase(),
@@ -737,10 +765,20 @@ export class PostgresMigrationTarget implements MigrationTarget {
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (firebase_uid)
            DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
-           RETURNING id`,
+           RETURNING id, firebase_uid, email, name, created_at`,
           [user.id, user.firebaseUid, user.email, user.name, user.createdAt],
         );
-        const postgresId = String(result.rows[0]?.id ?? user.id);
+        const row = result.rows[0];
+        if (
+          !row
+          || String(row.firebase_uid) !== user.firebaseUid
+          || String(row.email) !== user.email
+          || String(row.name) !== user.name
+          || !sameInstant(row.created_at, user.createdAt)
+        ) {
+          throw new Error(`User target identity mismatch for ${user.legacyId}`);
+        }
+        const postgresId = String(row.id);
         actualUserIds.set(user.id, postgresId);
         await upsertMapping(database, {
           entityType: 'user', legacyId: user.legacyId, postgresId,
@@ -756,74 +794,143 @@ export class PostgresMigrationTarget implements MigrationTarget {
             `INSERT INTO trips
                (id, name, room_code, owner_membership_id, is_locked, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (id)
-             DO UPDATE SET name = EXCLUDED.name,
-                           room_code = EXCLUDED.room_code,
-                           owner_membership_id = EXCLUDED.owner_membership_id,
-                           is_locked = EXCLUDED.is_locked,
-                           updated_at = EXCLUDED.updated_at`,
+             ON CONFLICT (id) DO NOTHING
+             RETURNING id`,
             [
               trip.id, trip.name, trip.roomCode, trip.ownerMembershipId, trip.isLocked,
               trip.createdAt, trip.updatedAt,
             ],
-          );
+          ).then(async (inserted) => {
+            if (inserted.rowCount !== 0) return;
+            const existing = await database.query(
+              `SELECT id, name, room_code, owner_membership_id, is_locked, created_at, updated_at
+                 FROM trips WHERE id = $1`,
+              [trip.id],
+            );
+            const row = existing.rows[0];
+            if (
+              !row
+              || String(row.name) !== trip.name
+              || String(row.room_code) !== trip.roomCode
+              || String(row.owner_membership_id) !== trip.ownerMembershipId
+              || Boolean(row.is_locked) !== trip.isLocked
+              || !sameInstant(row.created_at, trip.createdAt)
+              || !sameInstant(row.updated_at, trip.updatedAt)
+            ) {
+              throw new Error(`Trip target identity mismatch for ${trip.id}`);
+            }
+          });
           await upsertMapping(database, {
             entityType: 'trip', legacyId: trip.id, postgresId: trip.id,
           });
 
           for (const membership of plan.memberships.filter(({ tripId }) => tripId === trip.id)) {
-            await database.query(
+            const mappedUserId = membership.userId
+              ? actualUserIds.get(membership.userId) ?? membership.userId
+              : null;
+            const insertedMembership = await database.query(
               `INSERT INTO trip_memberships
                  (id, trip_id, user_id, display_name, role, status, created_at)
                VALUES ($1, $2, $3, $4, $5, 'active', $6)
-               ON CONFLICT (id)
-               DO UPDATE SET user_id = EXCLUDED.user_id,
-                             display_name = EXCLUDED.display_name,
-                             role = EXCLUDED.role,
-                             status = 'active',
-                             left_at = NULL`,
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id`,
               [
                 membership.id,
                 membership.tripId,
-                membership.userId ? actualUserIds.get(membership.userId) ?? membership.userId : null,
+                mappedUserId,
                 membership.displayName,
                 membership.role,
                 membership.createdAt,
               ],
             );
+            if (insertedMembership.rowCount === 0) {
+              const existing = await database.query(
+                `SELECT id, trip_id, user_id, display_name, role, status, created_at
+                   FROM trip_memberships WHERE id = $1`,
+                [membership.id],
+              );
+              const row = existing.rows[0];
+              if (
+                !row
+                || String(row.trip_id) !== membership.tripId
+                || (row.user_id === null ? null : String(row.user_id)) !== mappedUserId
+                || String(row.display_name) !== membership.displayName
+                || String(row.role) !== membership.role
+                || String(row.status) !== 'active'
+                || !sameInstant(row.created_at, membership.createdAt)
+              ) {
+                throw new Error(`Membership target identity mismatch for ${membership.id}`);
+              }
+            }
             await upsertMapping(database, {
               entityType: 'membership', legacyId: membership.id, postgresId: membership.id,
             });
           }
 
           for (const expense of plan.expenses.filter(({ tripId }) => tripId === trip.id)) {
-            await database.query(
+            const insertedExpense = await database.query(
               `INSERT INTO expenses
                  (id, trip_id, paid_by_membership_id, description, total_minor, currency, split_type, created_at, updated_at)
                VALUES ($1, $2, $3, $4, $5, 'INR', $6, $7, $7)
-               ON CONFLICT (id)
-               DO UPDATE SET paid_by_membership_id = EXCLUDED.paid_by_membership_id,
-                             description = EXCLUDED.description,
-                             total_minor = EXCLUDED.total_minor,
-                             split_type = EXCLUDED.split_type,
-                             updated_at = EXCLUDED.updated_at`,
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id`,
               [
                 expense.id, expense.tripId, expense.paidByMembershipId, expense.description,
                 expense.totalMinor, expense.splitType, expense.createdAt,
               ],
             );
+            if (insertedExpense.rowCount === 0) {
+              const existing = await database.query(
+                `SELECT id, trip_id, paid_by_membership_id, description, total_minor,
+                        currency, split_type, created_at, updated_at
+                   FROM expenses WHERE id = $1`,
+                [expense.id],
+              );
+              const row = existing.rows[0];
+              if (
+                !row
+                || String(row.trip_id) !== expense.tripId
+                || String(row.paid_by_membership_id) !== expense.paidByMembershipId
+                || String(row.description) !== expense.description
+                || BigInt(String(row.total_minor)) !== expense.totalMinor
+                || String(row.currency) !== 'INR'
+                || String(row.split_type) !== expense.splitType
+                || !sameInstant(row.created_at, expense.createdAt)
+                || !sameInstant(row.updated_at, expense.createdAt)
+              ) {
+                throw new Error(`Expense target identity mismatch for ${expense.id}`);
+              }
+            }
             await upsertMapping(database, {
               entityType: 'expense', legacyId: expense.id, postgresId: expense.id,
             });
 
             for (const split of plan.expenseSplits.filter(({ expenseId }) => expenseId === expense.id)) {
-              await database.query(
+              const insertedSplit = await database.query(
                 `INSERT INTO expense_splits (expense_id, trip_id, membership_id, amount_minor)
                  VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (expense_id, membership_id)
-                 DO UPDATE SET trip_id = EXCLUDED.trip_id, amount_minor = EXCLUDED.amount_minor`,
+                 ON CONFLICT (expense_id, membership_id) DO NOTHING
+                 RETURNING expense_id`,
                 [split.expenseId, split.tripId, split.membershipId, split.amountMinor],
               );
+              if (insertedSplit.rowCount === 0) {
+                const existing = await database.query(
+                  `SELECT expense_id, trip_id, membership_id, amount_minor
+                     FROM expense_splits
+                    WHERE expense_id = $1 AND membership_id = $2`,
+                  [split.expenseId, split.membershipId],
+                );
+                const row = existing.rows[0];
+                if (
+                  !row
+                  || String(row.trip_id) !== split.tripId
+                  || BigInt(String(row.amount_minor)) !== split.amountMinor
+                ) {
+                  throw new Error(
+                    `Expense split target identity mismatch for ${split.expenseId}/${split.membershipId}`,
+                  );
+                }
+              }
             }
           }
 
@@ -901,15 +1008,30 @@ export class PostgresMigrationTarget implements MigrationTarget {
           }
 
           for (const message of plan.messages.filter(({ tripId }) => tripId === trip.id)) {
-            await database.query(
+            const insertedMessage = await database.query(
               `INSERT INTO chat_messages (id, trip_id, membership_id, message, created_at)
                VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (id)
-               DO UPDATE SET membership_id = EXCLUDED.membership_id,
-                             message = EXCLUDED.message,
-                             created_at = EXCLUDED.created_at`,
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id`,
               [message.id, message.tripId, message.membershipId, message.message, message.createdAt],
             );
+            if (insertedMessage.rowCount === 0) {
+              const existing = await database.query(
+                `SELECT id, trip_id, membership_id, message, created_at
+                   FROM chat_messages WHERE id = $1`,
+                [message.id],
+              );
+              const row = existing.rows[0];
+              if (
+                !row
+                || String(row.trip_id) !== message.tripId
+                || String(row.membership_id) !== message.membershipId
+                || String(row.message) !== message.message
+                || !sameInstant(row.created_at, message.createdAt)
+              ) {
+                throw new Error(`Message target identity mismatch for ${message.id}`);
+              }
+            }
             await upsertMapping(database, {
               entityType: 'message', legacyId: message.id, postgresId: message.id,
             });
@@ -989,6 +1111,151 @@ export class PostgresMigrationTarget implements MigrationTarget {
           message: `Expected ${expected[key]} ${key}, found ${actual}`,
         });
       }
+    }
+
+    const userLegacyIdByTargetId = new Map(plan.users.map((user) => [user.id, user.legacyId]));
+    const identityResult = await this.database.query(`
+      WITH expected_users AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb)
+          AS x(legacy_id text, firebase_uid text, email text, name text, created_at timestamptz)
+      ), expected_trips AS (
+        SELECT * FROM jsonb_to_recordset($2::jsonb)
+          AS x(legacy_id text, id text, name text, room_code text, owner_membership_id text,
+               is_locked boolean, created_at timestamptz, updated_at timestamptz)
+      ), expected_memberships AS (
+        SELECT * FROM jsonb_to_recordset($3::jsonb)
+          AS x(legacy_id text, id text, trip_id text, user_legacy_id text, display_name text,
+               role text, created_at timestamptz)
+      ), expected_expenses AS (
+        SELECT * FROM jsonb_to_recordset($4::jsonb)
+          AS x(legacy_id text, id text, trip_id text, payer_id text, description text,
+               total_minor bigint, currency text, split_type text, created_at timestamptz,
+               updated_at timestamptz)
+      ), expected_splits AS (
+        SELECT * FROM jsonb_to_recordset($5::jsonb)
+          AS x(legacy_id text, expense_id text, trip_id text, membership_id text, amount_minor bigint)
+      ), expected_messages AS (
+        SELECT * FROM jsonb_to_recordset($6::jsonb)
+          AS x(legacy_id text, id text, trip_id text, membership_id text, message text,
+               created_at timestamptz)
+      )
+      SELECT 'user' AS entity, e.legacy_id,
+             'user identity differs from transformed source' AS reason
+        FROM expected_users e
+        LEFT JOIN legacy_id_mappings map
+          ON map.entity_type = 'user' AND map.legacy_id = e.legacy_id
+        LEFT JOIN users target ON target.id::text = map.postgres_id
+       WHERE target.id IS NULL
+          OR target.firebase_uid IS DISTINCT FROM e.firebase_uid
+          OR target.email IS DISTINCT FROM e.email
+          OR target.name IS DISTINCT FROM e.name
+          OR target.created_at IS DISTINCT FROM e.created_at
+      UNION ALL
+      SELECT 'trip', e.legacy_id, 'trip identity or owner reference differs from transformed source'
+        FROM expected_trips e
+        LEFT JOIN legacy_id_mappings map
+          ON map.entity_type = 'trip' AND map.legacy_id = e.legacy_id
+        LEFT JOIN trips target ON target.id::text = map.postgres_id
+       WHERE map.postgres_id IS DISTINCT FROM e.id
+          OR target.name IS DISTINCT FROM e.name
+          OR target.room_code IS DISTINCT FROM e.room_code
+          OR target.owner_membership_id IS DISTINCT FROM e.owner_membership_id
+          OR target.is_locked IS DISTINCT FROM e.is_locked
+          OR target.created_at IS DISTINCT FROM e.created_at
+          OR target.updated_at IS DISTINCT FROM e.updated_at
+      UNION ALL
+      SELECT 'membership', e.legacy_id,
+             'membership identity or parent reference differs from transformed source'
+        FROM expected_memberships e
+        LEFT JOIN legacy_id_mappings map
+          ON map.entity_type = 'membership' AND map.legacy_id = e.legacy_id
+        LEFT JOIN trip_memberships target ON target.id::text = map.postgres_id
+        LEFT JOIN legacy_id_mappings user_map
+          ON user_map.entity_type = 'user' AND user_map.legacy_id = e.user_legacy_id
+       WHERE map.postgres_id IS DISTINCT FROM e.id
+          OR target.trip_id IS DISTINCT FROM e.trip_id
+          OR target.user_id::text IS DISTINCT FROM user_map.postgres_id
+          OR target.display_name IS DISTINCT FROM e.display_name
+          OR target.role IS DISTINCT FROM e.role
+          OR target.status IS DISTINCT FROM 'active'
+          OR target.created_at IS DISTINCT FROM e.created_at
+      UNION ALL
+      SELECT 'expense', e.legacy_id,
+             'expense identity or parent reference differs from transformed source'
+        FROM expected_expenses e
+        LEFT JOIN legacy_id_mappings map
+          ON map.entity_type = 'expense' AND map.legacy_id = e.legacy_id
+        LEFT JOIN expenses target ON target.id::text = map.postgres_id
+       WHERE map.postgres_id IS DISTINCT FROM e.id
+          OR target.trip_id IS DISTINCT FROM e.trip_id
+          OR target.paid_by_membership_id IS DISTINCT FROM e.payer_id
+          OR target.description IS DISTINCT FROM e.description
+          OR target.total_minor IS DISTINCT FROM e.total_minor
+          OR target.currency IS DISTINCT FROM e.currency
+          OR target.split_type IS DISTINCT FROM e.split_type
+          OR target.created_at IS DISTINCT FROM e.created_at
+          OR target.updated_at IS DISTINCT FROM e.updated_at
+      UNION ALL
+      SELECT 'expense_split', e.legacy_id,
+             'expense split identity or parent reference differs from transformed source'
+        FROM expected_splits e
+        LEFT JOIN expense_splits target
+          ON target.expense_id = e.expense_id AND target.membership_id = e.membership_id
+       WHERE target.expense_id IS NULL
+          OR target.trip_id IS DISTINCT FROM e.trip_id
+          OR target.amount_minor IS DISTINCT FROM e.amount_minor
+      UNION ALL
+      SELECT 'message', e.legacy_id,
+             'message identity or parent reference differs from transformed source'
+        FROM expected_messages e
+        LEFT JOIN legacy_id_mappings map
+          ON map.entity_type = 'message' AND map.legacy_id = e.legacy_id
+        LEFT JOIN chat_messages target ON target.id::text = map.postgres_id
+       WHERE map.postgres_id IS DISTINCT FROM e.id
+          OR target.trip_id IS DISTINCT FROM e.trip_id
+          OR target.membership_id IS DISTINCT FROM e.membership_id
+          OR target.message IS DISTINCT FROM e.message
+          OR target.created_at IS DISTINCT FROM e.created_at
+    `, [
+      JSON.stringify(plan.users.map((user) => ({
+        legacy_id: user.legacyId, firebase_uid: user.firebaseUid, email: user.email,
+        name: user.name, created_at: user.createdAt.toISOString(),
+      }))),
+      JSON.stringify(plan.trips.map((trip) => ({
+        legacy_id: trip.id, id: trip.id, name: trip.name, room_code: trip.roomCode,
+        owner_membership_id: trip.ownerMembershipId, is_locked: trip.isLocked,
+        created_at: trip.createdAt.toISOString(), updated_at: trip.updatedAt.toISOString(),
+      }))),
+      JSON.stringify(plan.memberships.map((membership) => ({
+        legacy_id: membership.id, id: membership.id, trip_id: membership.tripId,
+        user_legacy_id: membership.userId ? userLegacyIdByTargetId.get(membership.userId) ?? null : null,
+        display_name: membership.displayName, role: membership.role,
+        created_at: membership.createdAt.toISOString(),
+      }))),
+      JSON.stringify(plan.expenses.map((expense) => ({
+        legacy_id: expense.id, id: expense.id, trip_id: expense.tripId,
+        payer_id: expense.paidByMembershipId, description: expense.description,
+        total_minor: expense.totalMinor.toString(), currency: 'INR', split_type: expense.splitType,
+        created_at: expense.createdAt.toISOString(), updated_at: expense.createdAt.toISOString(),
+      }))),
+      JSON.stringify(plan.expenseSplits.map((split) => ({
+        legacy_id: `${split.expenseId}:${split.membershipId}`,
+        expense_id: split.expenseId, trip_id: split.tripId, membership_id: split.membershipId,
+        amount_minor: split.amountMinor.toString(),
+      }))),
+      JSON.stringify(plan.messages.map((message) => ({
+        legacy_id: message.id, id: message.id, trip_id: message.tripId,
+        membership_id: message.membershipId, message: message.message,
+        created_at: message.createdAt.toISOString(),
+      }))),
+    ]);
+    for (const row of identityResult.rows) {
+      issues.push({
+        code: 'database_row_identity_mismatch',
+        entity: String(row.entity),
+        legacyId: String(row.legacy_id),
+        message: String(row.reason),
+      });
     }
 
     for (const receipt of plan.receipts) {

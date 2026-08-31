@@ -105,6 +105,7 @@ export class PostgresTripRepository implements TripRepository {
            LEFT JOIN trip_memberships existing
              ON existing.trip_id = t.id AND existing.user_id = u.id
           WHERE upper(t.room_code) = $1
+            AND t.archived_at IS NULL
           FOR UPDATE OF t`,
         [roomCode, firebaseUid, displayName],
       );
@@ -236,25 +237,79 @@ export class PostgresTripRepository implements TripRepository {
     });
   }
 
-  async setTripLocked(tripId: string, locked: boolean): Promise<void> {
-    await this.database.query(
-      `UPDATE trips SET is_locked = $2, updated_at = now() WHERE id = $1`,
-      [tripId, locked],
+  async setTripLockedForOwner(
+    firebaseUid: string,
+    tripId: string,
+    locked: boolean,
+  ): Promise<'updated' | 'forbidden' | 'not-found'> {
+    const updated = await this.database.query(
+      `UPDATE trips t
+          SET is_locked = $3, updated_at = now()
+         FROM trip_memberships actor
+         JOIN users u ON u.id = actor.user_id
+        WHERE t.id = $2
+          AND t.owner_membership_id = actor.id
+          AND actor.trip_id = t.id
+          AND actor.status = 'active'
+          AND actor.role = 'owner'
+          AND u.account_status = 'active'
+          AND u.firebase_uid = $1
+        RETURNING t.id`,
+      [firebaseUid, tripId, locked],
     );
+    if (updated.rowCount === 1) return 'updated';
+    const existence = await this.database.query(
+      `SELECT EXISTS (SELECT 1 FROM trips WHERE id = $1) AS trip_exists`,
+      [tripId],
+    );
+    return existence.rows[0]?.trip_exists ? 'forbidden' : 'not-found';
   }
 
-  async findMembership(tripId: string, membershipId: string): Promise<Membership | null> {
-    const result = await this.database.query(
-      `SELECT m.id, m.trip_id, u.firebase_uid, m.display_name, m.role, m.status, m.created_at
-         FROM trip_memberships m
-         LEFT JOIN users u ON u.id = m.user_id
-        WHERE m.trip_id = $1 AND m.id = $2`,
-      [tripId, membershipId],
-    );
-    return result.rows[0] ? mapMembership(result.rows[0]) : null;
-  }
+  removeMemberForActor(
+    firebaseUid: string,
+    tripId: string,
+    membershipId: string,
+  ): Promise<'removed' | 'forbidden' | 'not-found' | 'owner-required'> {
+    return this.transaction(async (database) => {
+      const trip = await database.query(
+        `SELECT id FROM trips WHERE id = $1 FOR UPDATE`,
+        [tripId],
+      );
+      if (trip.rowCount !== 1) return 'not-found';
 
-  async leaveMembership(membershipId: string): Promise<void> {
-    await this.database.query(`SELECT leave_trip_membership($1)`, [membershipId]);
+      const actorResult = await database.query(
+        `SELECT actor.id AS actor_id, actor.role AS actor_role
+           FROM trip_memberships actor
+           JOIN users u ON u.id = actor.user_id
+          WHERE actor.trip_id = $2
+            AND actor.status = 'active'
+            AND u.account_status = 'active'
+            AND u.firebase_uid = $1
+          FOR UPDATE OF actor`,
+        [firebaseUid, tripId],
+      );
+      const actor = actorResult.rows[0];
+      if (!actor) return 'forbidden';
+
+      const targetResult = await database.query(
+        `SELECT id, role, status
+           FROM trip_memberships
+          WHERE trip_id = $1 AND id = $2
+          FOR UPDATE`,
+        [tripId, membershipId],
+      );
+      const target = targetResult.rows[0];
+      if (!target || target.status !== 'active') return 'not-found';
+      if (actor.actor_id !== target.id && actor.actor_role !== 'owner') return 'forbidden';
+
+      const leaveResult = await database.query(
+        `SELECT leave_trip_membership($1, false) AS outcome`,
+        [membershipId],
+      );
+      const outcome = leaveResult.rows[0]?.outcome;
+      if (outcome === 'owner-required') return 'owner-required';
+      if (outcome !== 'left') return 'not-found';
+      return 'removed';
+    });
   }
 }

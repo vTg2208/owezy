@@ -9,7 +9,9 @@ interface Result {
 
 class AccountQueryBoundary {
   readonly statements: string[] = [];
-  readonly trip = { id: 'trip-1', ownerMembershipId: 'owner-1' };
+  readonly trip = {
+    id: 'trip-1', ownerMembershipId: 'owner-1', isLocked: false, archivedAt: null as Date | null,
+  };
   readonly membership = {
     id: 'owner-1',
     userId: '11111111-1111-4111-8111-111111111111' as string | null,
@@ -72,23 +74,32 @@ class AccountQueryBoundary {
     }
 
     if (normalized.startsWith('SELECT owner.id AS owner_membership_id')) {
-      if (!normalized.includes("candidate.status = 'active'")) throw new Error('inactive successor could be selected');
-      if (!normalized.includes('ORDER BY candidate.created_at, candidate.id')) {
-        throw new Error('successor choice is not deterministic');
-      }
       if (!normalized.includes('FOR UPDATE OF owner, trip')) throw new Error('owned trip was not locked');
-      const successor = this.successors
-        .filter((candidate) => candidate.status === 'active')
-        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()
-          || left.id.localeCompare(right.id))[0];
       return {
         rows: [{
           owner_membership_id: this.membership.id,
           trip_id: this.trip.id,
-          successor_membership_id: successor?.id ?? null,
         }],
         rowCount: 1,
       };
+    }
+
+    if (normalized.startsWith('SELECT leave_trip_membership')) {
+      if (!this.transactionOpen) throw new Error('owner continuity escaped the deletion transaction');
+      const successor = this.successors
+        .filter((candidate) => candidate.status === 'active' && candidate.userId !== null)
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+          || left.id.localeCompare(right.id))[0];
+      if (successor) {
+        this.membership.role = 'member';
+        successor.role = 'owner';
+        this.trip.ownerMembershipId = successor.id;
+      } else {
+        this.trip.isLocked = true;
+        this.trip.archivedAt = new Date('2026-08-31T00:00:00.000Z');
+      }
+      this.ownershipUpdatedInsideTransaction = true;
+      return { rows: [{ outcome: successor ? 'left' : 'archived' }], rowCount: 1 };
     }
 
     if (normalized.startsWith('UPDATE trip_memberships') && normalized.includes("SET role = 'member'")) {
@@ -215,10 +226,13 @@ describe('PostgresAccountRepository', () => {
     expect(database.successors.filter(({ role }) => role === 'owner')).toHaveLength(1);
   });
 
-  it('keeps an anonymized historical owner when the trip has no active successor', async () => {
+  it('archives and locks a trip when account deletion has no connected active successor', async () => {
     const database = new AccountQueryBoundary();
     for (const successor of database.successors) successor.status = 'left';
-    const repository = new PostgresAccountRepository(database, async (work) => work(database));
+    const repository = new PostgresAccountRepository(database, async (work) => {
+      database.transactionOpen = true;
+      try { return await work(database); } finally { database.transactionOpen = false; }
+    });
 
     await repository.beginAccountDeletion('firebase-1');
 
@@ -229,6 +243,8 @@ describe('PostgresAccountRepository', () => {
       status: 'anonymized',
     });
     expect(database.trip.ownerMembershipId).toBe('owner-1');
+    expect(database.trip.isLocked).toBe(true);
+    expect(database.trip.archivedAt).toEqual(new Date('2026-08-31T00:00:00.000Z'));
   });
 
   it('retries the database phase when concurrent account deletions deadlock', async () => {
@@ -248,11 +264,13 @@ describe('PostgresAccountRepository', () => {
     let secondTransactionAttempts = 0;
     const firstRepository = new PostgresAccountRepository(first, async (work) => {
       firstTransactionAttempts += 1;
-      return work(first);
+      first.transactionOpen = true;
+      try { return await work(first); } finally { first.transactionOpen = false; }
     });
     const secondRepository = new PostgresAccountRepository(second, async (work) => {
       secondTransactionAttempts += 1;
-      return work(second);
+      second.transactionOpen = true;
+      try { return await work(second); } finally { second.transactionOpen = false; }
     });
     let firstFirebaseDeletions = 0;
     let secondFirebaseDeletions = 0;

@@ -1,4 +1,5 @@
 import { generateId } from '../utils/helpers';
+import { z } from 'zod';
 import { ServiceError } from './errors';
 
 export interface MessageMembership {
@@ -24,7 +25,10 @@ export interface MessageCursor {
 
 export interface MessageRepository {
   findActiveMembership(firebaseUid: string, tripId: string): Promise<MessageMembership | null>;
-  createMessage(message: MessageRecord): Promise<void>;
+  createMessageForMember(
+    firebaseUid: string,
+    message: Omit<MessageRecord, 'membershipId' | 'memberName'>,
+  ): Promise<MessageRecord | null>;
   listMessagesForMember(
     firebaseUid: string,
     tripId: string,
@@ -62,21 +66,19 @@ export class MessageService {
     tripId: string,
     input: { memberId?: string; message: string },
   ): Promise<{ messageId: string; success: true }> {
-    const membership = await this.repository.findActiveMembership(firebaseUid, tripId);
-    if (!membership) throw new ServiceError(403, 'You are not a member of this trip');
-    const message = input.message?.trim();
-    if (!message) throw new ServiceError(400, 'message is required');
+    const parsed = z.object({ message: z.string().trim().min(1) }).safeParse(input);
+    if (!parsed.success) throw new ServiceError(400, 'message is required');
+    const message = parsed.data.message;
     if (message.length > 500) throw new ServiceError(400, 'message must be at most 500 characters');
 
     const messageId = this.createId();
-    await this.repository.createMessage({
+    const created = await this.repository.createMessageForMember(firebaseUid, {
       id: messageId,
       tripId,
-      membershipId: membership.id,
-      memberName: membership.name,
       message,
       createdAt: this.now(),
     });
+    if (!created) throw new ServiceError(403, 'You are not a member of this trip');
     return { messageId, success: true };
   }
 

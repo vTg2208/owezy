@@ -24,6 +24,7 @@ class TripQueryBoundary {
     }
     if (sql.includes('FROM trips t') && sql.includes('FOR UPDATE OF t')) {
       if (!sql.includes("m.status = 'active'")) throw new Error('name conflict was not limited to active memberships');
+      if (!sql.includes('t.archived_at IS NULL')) throw new Error('archived trip remained joinable');
       return {
         rows: [{
           trip_id: 'trip-1', trip_name: 'Goa', room_code: values?.[0], owner_membership_id: 'owner-1',
@@ -104,5 +105,80 @@ describe('PostgresTripRepository', () => {
 
     expect(details?.expenses[0].receiptUrl).toBe('/api/trips/trip-1/receipts/receipt-1');
     expect(receiptMetadataQueried).toBe(true);
+  });
+
+  it('locks a trip only when the Firebase user is still its active owner', async () => {
+    const queries: Array<{ text: string; values?: unknown[] }> = [];
+    const database = {
+      async query(text: string, values?: unknown[]) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        queries.push({ text: sql, values });
+        if (sql.startsWith('UPDATE trips t')) return { rows: [{ id: 'trip-1' }], rowCount: 1 };
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+    const repository = new PostgresTripRepository(database, async (work) => work(database));
+
+    await expect(repository.setTripLockedForOwner('firebase-owner', 'trip-1', true))
+      .resolves.toBe('updated');
+
+    expect(queries[0].text).toContain("actor.status = 'active'");
+    expect(queries[0].text).toContain("actor.role = 'owner'");
+    expect(queries[0].text).toContain('u.firebase_uid = $1');
+    expect(queries[0].text).toContain('t.owner_membership_id = actor.id');
+    expect(queries[0].values).toEqual(['firebase-owner', 'trip-1', true]);
+  });
+
+  it('distinguishes a missing trip from a user who lost owner authorization before lock mutation', async () => {
+    for (const tripExists of [true, false]) {
+      const database = {
+        async query(text: string) {
+          const sql = text.replace(/\s+/g, ' ').trim();
+          if (sql.startsWith('UPDATE trips t')) return { rows: [], rowCount: 0 };
+          if (sql.startsWith('SELECT EXISTS')) {
+            return { rows: [{ trip_exists: tripExists }], rowCount: 1 };
+          }
+          throw new Error(`Unexpected SQL: ${sql}`);
+        },
+      };
+      const repository = new PostgresTripRepository(database, async (work) => work(database));
+      await expect(repository.setTripLockedForOwner('firebase-owner', 'trip-1', true))
+        .resolves.toBe(tripExists ? 'forbidden' : 'not-found');
+    }
+  });
+
+  it('authorizes and removes a member while the trip, actor, and target rows stay locked', async () => {
+    const queries: string[] = [];
+    let transactionOpen = false;
+    const database = {
+      async query(text: string) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        queries.push(sql);
+        if (!transactionOpen) throw new Error('removal escaped its transaction');
+        if (sql.startsWith('SELECT id FROM trips')) return { rows: [{ id: 'trip-1' }], rowCount: 1 };
+        if (sql.includes('AS actor_id')) {
+          return { rows: [{ actor_id: 'owner-1', actor_role: 'owner' }], rowCount: 1 };
+        }
+        if (sql.startsWith('SELECT id, role, status FROM trip_memberships')) {
+          return { rows: [{ id: 'member-1', role: 'member', status: 'active' }], rowCount: 1 };
+        }
+        if (sql.startsWith('SELECT leave_trip_membership')) {
+          return { rows: [{ outcome: 'left' }], rowCount: 1 };
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+    const repository = new PostgresTripRepository(database, async (work) => {
+      transactionOpen = true;
+      try { return await work(database); } finally { transactionOpen = false; }
+    });
+
+    await expect(repository.removeMemberForActor('firebase-owner', 'trip-1', 'member-1'))
+      .resolves.toBe('removed');
+
+    expect(queries[0]).toContain('FOR UPDATE');
+    expect(queries[1]).toContain("actor.status = 'active'");
+    expect(queries[1]).toContain('FOR UPDATE OF actor');
+    expect(queries[2]).toContain('FOR UPDATE');
   });
 });

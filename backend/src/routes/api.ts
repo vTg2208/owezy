@@ -67,7 +67,10 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
 
   router.post('/trips', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
-      const { tripName, adminName } = request.body;
+      const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const { tripName, adminName } = body;
       response.status(201).json(await tripService.createTrip(request.userId!, tripName ?? '', adminName ?? ''));
     } catch (error) {
       handleError(error, response, next);
@@ -76,7 +79,10 @@ export function createApiRouter(dependencies: ApiRoutesDependencies = defaultDep
 
   router.post('/trips/join', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
-      const { roomCode, memberName } = request.body;
+      const joinBody = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const { roomCode, memberName } = joinBody;
       const result = await tripService.joinTrip(request.userId!, roomCode ?? '', memberName ?? '');
       const { created, ...body } = result;
       response.status(created ? 201 : 200).json(body);

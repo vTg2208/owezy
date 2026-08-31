@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 export const DEFAULT_RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
@@ -85,7 +86,21 @@ export class LocalReceiptStorage implements ReceiptStorage {
     const storageKey = `${objectId}${extensionByContentType[contentType]}`;
     const objectPath = this.objectPath(storageKey);
     await mkdir(this.root, { recursive: true });
-    await writeFile(objectPath, bytes);
+    const temporaryPath = this.objectPath(`.${storageKey}.${randomUUID()}.tmp`);
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    let published = false;
+    try {
+      handle = await open(temporaryPath, 'wx', 0o600);
+      await handle.writeFile(bytes);
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      await rename(temporaryPath, objectPath);
+      published = true;
+    } finally {
+      if (handle) await handle.close().catch(() => undefined);
+      if (!published) await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
     return { storageKey };
   }
 

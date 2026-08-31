@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { watch } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -48,6 +49,35 @@ describe('LocalReceiptStorage', () => {
 
     expect(restarted.storageKey).toBe('receipt-restart.png');
     await expect(storage.read(restarted.storageKey)).resolves.toEqual(expected);
+  });
+
+  it('publishes through an exclusive same-directory temporary file and leaves no temporary artifact', async () => {
+    const root = await temporaryDirectory();
+    const observedNames: string[] = [];
+    const watcher = watch(root, (_event, filename) => {
+      if (filename) observedNames.push(filename.toString());
+    });
+    const storage = new LocalReceiptStorage(root);
+
+    try {
+      await storage.write(Buffer.alloc(1024 * 1024, 0x5a), 'image/png', 'atomic-write');
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      watcher.close();
+    }
+
+    expect(observedNames.some((name) => name.endsWith('.tmp'))).toBe(true);
+    expect(await readdir(root)).toEqual(['atomic-write.png']);
+  });
+
+  it('cleans its exclusive temporary file when atomic publication fails', async () => {
+    const root = await temporaryDirectory();
+    await mkdir(join(root, 'blocked.png'));
+    const storage = new LocalReceiptStorage(root);
+
+    await expect(storage.write(Buffer.from('bytes'), 'image/png', 'blocked')).rejects.toBeDefined();
+
+    expect(await readdir(root)).toEqual(['blocked.png']);
   });
 
   it('rejects an unsafe internal object ID before creating a key', async () => {

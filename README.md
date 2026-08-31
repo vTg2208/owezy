@@ -16,7 +16,7 @@ Receipt bytes are never stored in PostgreSQL or expense JSON. PostgreSQL stores 
 
 ## Stack and prerequisites
 
-- Node.js 20+
+- Node.js 20.19.0 or newer
 - PostgreSQL
 - Firebase project and Admin credentials
 - MongoDB access only while migrating a legacy deployment
@@ -40,13 +40,15 @@ Create `backend/.env` from `backend/.env.example`:
 PORT=3000
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/owezy
 DATABASE_SSL=false
+DATABASE_CONNECTION_TIMEOUT_MS=5000
+DATABASE_QUERY_TIMEOUT_MS=10000
 GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
 RECEIPT_STORAGE_ROOT=./var/receipts
 RECEIPT_MAX_BYTES=5242880
 RECEIPT_PENDING_TTL_HOURS=24
 ```
 
-`RECEIPT_STORAGE_ROOT` is optional. If it is absent, receipt storage is disabled and upload attempts return a service-unavailable response. Paths are resolved under the configured root and object names are generated deterministically from server-issued receipt IDs, so an interrupted write can be identified and safely replaced on retry. The default backend upload limit is 5 MiB; the frontend intentionally leaves byte-limit enforcement to the configured backend.
+`DATABASE_SSL=true` always verifies the PostgreSQL server certificate. Set `DATABASE_SSL_CA` to a PEM trust root when the platform CA is not sufficient; literal `\n` sequences are expanded. Connection and query timeouts are bounded positive millisecond values (defaults: 5,000 and 10,000). `RECEIPT_STORAGE_ROOT` is optional. If it is absent, receipt storage is disabled and upload attempts return a service-unavailable response. Paths are resolved under the configured root and object names are generated deterministically from server-issued receipt IDs. Local receipt publication writes and syncs an exclusive same-directory temporary file before an atomic rename, so migration repair never exposes partial bytes. The default backend upload limit is 5 MiB; the frontend intentionally leaves byte-limit enforcement to the configured backend.
 
 Create `frontend/.env` from `frontend/.env.example`. The API value must include the backend `/api` prefix:
 
@@ -68,7 +70,7 @@ npm run migrate
 npm run dev
 ```
 
-Migrations are a release step and are not applied automatically by `npm start`: run `npm run migrate` successfully against the target `DATABASE_URL` before every backend start. The migration runner applies the SQL files in ascending filename order and records each completed filename in `schema_migrations`.
+Migrations are a release step and are not applied automatically by `npm start`: run `npm run migrate` successfully against the target `DATABASE_URL` before every backend start. The migration runner holds a PostgreSQL advisory lock on one checked-out client across the ledger check and ordered SQL application, records each completed filename in `schema_migrations`, and closes its pool on success or failure.
 
 Start the frontend separately:
 
@@ -96,7 +98,7 @@ The local filesystem implementation is intended for development or a single back
 
 ## Legacy MongoDB migration
 
-Migration requires migrations 001-004 to be applied first. Take a MongoDB backup, stop legacy writes, configure the target PostgreSQL database and receipt root, then set migration-only source values:
+Migration requires migrations 001-005 to be applied first. Migration 005 transfers any reachable legacy owner to the earliest connected active membership or archives and locks a trip that has no reachable owner. Archived trips cannot be joined. Take a MongoDB backup, stop legacy writes, configure the target PostgreSQL database and receipt root, then set migration-only source values:
 
 ```env
 MONGODB_URI=mongodb://localhost:27017/tripexpense
@@ -126,8 +128,8 @@ The command:
 - preserves legacy trip, membership, expense, and message IDs through `legacy_id_mappings`;
 - converts decimal amounts to integer minor units;
 - extracts supported Base64 data-URL receipts into `ReceiptStorage` and stores metadata only in PostgreSQL;
-- uses idempotent PostgreSQL upserts, receipt mapping/row/object checks, and per-trip transactions;
-- verifies persisted counts, references, expense split totals, and zero-sum trip balances; and
+- uses collision-rejecting PostgreSQL inserts, immutable legacy mappings, receipt mapping/row/object checks, and per-trip transactions;
+- verifies every persisted mapped row identity and parent reference in addition to counts, expense split totals, and zero-sum trip balances; and
 - exits unsuccessfully if preflight or post-write verification finds an issue.
 
 It is safe to rerun after a failure. Before skipping a receipt, the migration proves that its mapping identity, PostgreSQL metadata, byte size, checksum, and stored bytes match the source. Missing rows or objects and corrupt bytes are repaired at the deterministic server key. Failed per-trip transactions clean up newly written objects and surface any cleanup failure so operators know that a recoverable orphan remains. Keep the MongoDB backup and source deployment read-only until post-write verification and application smoke tests pass.
@@ -151,7 +153,7 @@ PostgreSQL migration integration tests run only when `TEST_DATABASE_URL` is conf
 Deploy in this order:
 
 1. Provision and back up PostgreSQL.
-2. Configure Firebase credentials, `DATABASE_URL`, and TLS with `DATABASE_SSL=true` where required.
+2. Configure Firebase credentials, `DATABASE_URL`, authenticated TLS with `DATABASE_SSL=true` (and `DATABASE_SSL_CA` when required), plus bounded database timeouts.
 3. Provision durable receipt storage and set `RECEIPT_STORAGE_ROOT`, or leave uploads disabled.
 4. Build the backend with `npm install && npm run build`.
 5. Run `npm run migrate` as a release step before starting the new backend.

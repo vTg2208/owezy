@@ -37,12 +37,30 @@ export class PostgresMessageRepository implements MessageRepository {
     } : null;
   }
 
-  async createMessage(message: MessageRecord): Promise<void> {
-    await this.database.query(
-      `INSERT INTO chat_messages (id, trip_id, membership_id, message, created_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [message.id, message.tripId, message.membershipId, message.message, message.createdAt],
+  async createMessageForMember(
+    firebaseUid: string,
+    message: Omit<MessageRecord, 'membershipId' | 'memberName'>,
+  ): Promise<MessageRecord | null> {
+    const result = await this.database.query(
+      `WITH inserted AS (
+         INSERT INTO chat_messages (id, trip_id, membership_id, message, created_at)
+         SELECT $2, actor.trip_id, actor.id, $4, $5
+           FROM trip_memberships actor
+           JOIN users u ON u.id = actor.user_id
+          WHERE u.firebase_uid = $1
+            AND u.account_status = 'active'
+            AND actor.trip_id = $3
+            AND actor.status = 'active'
+          FOR UPDATE OF actor, u
+         RETURNING id, trip_id, membership_id, message, created_at
+       )
+       SELECT inserted.id, inserted.trip_id, inserted.membership_id,
+              actor.display_name, inserted.message, inserted.created_at
+         FROM inserted
+         JOIN trip_memberships actor ON actor.id = inserted.membership_id`,
+      [firebaseUid, message.id, message.tripId, message.message, message.createdAt],
     );
+    return result.rowCount === 1 ? mapMessage(result.rows[0]) : null;
   }
 
   async listMessagesForMember(

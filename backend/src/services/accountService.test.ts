@@ -18,6 +18,7 @@ class MemoryAccountRepository implements AccountRepository {
     createdAt: Date;
   }>();
   readonly tripOwners = new Map<string, string>();
+  readonly archivedTrips = new Set<string>();
 
   async upsertUser(firebaseUid: string, email: string, name: string): Promise<AccountUser> {
     const current = this.users.get(firebaseUid);
@@ -62,6 +63,7 @@ class MemoryAccountRepository implements AccountRepository {
         this.tripOwners.set(membership.tripId, successor[0]);
       } else {
         this.tripOwners.set(membership.tripId, membershipId);
+        this.archivedTrips.add(membership.tripId);
       }
     }
     for (const membership of this.memberships.values()) {
@@ -166,5 +168,24 @@ describe('AccountService', () => {
 
     await expect(service.deleteAccount('firebase-1')).resolves.toEqual({ success: true });
     expect(repository.users.get('firebase-1')?.status).toBe('deleted');
+  });
+
+  it('archives an owned trip when deleting the only connected account', async () => {
+    const repository = new MemoryAccountRepository();
+    await repository.upsertUser('firebase-1', 'person@example.com', 'Person');
+    repository.memberships.set('owner-1', {
+      firebaseUid: 'firebase-1', tripId: 'trip-1', displayName: 'Person', role: 'owner', status: 'active',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    repository.tripOwners.set('trip-1', 'owner-1');
+    const firebase = new MemoryFirebaseAuth();
+    firebase.postgresWasAnonymized = true;
+
+    await new AccountService(repository, firebase).deleteAccount('firebase-1');
+
+    expect(repository.archivedTrips.has('trip-1')).toBe(true);
+    expect(repository.memberships.get('owner-1')).toMatchObject({
+      firebaseUid: null, role: 'owner', status: 'anonymized',
+    });
   });
 });

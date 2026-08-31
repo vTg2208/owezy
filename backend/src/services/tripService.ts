@@ -1,4 +1,5 @@
 import { generateId, generateRoomCode } from '../utils/helpers';
+import { z } from 'zod';
 import { ServiceError } from './errors';
 
 export type MembershipRole = 'owner' | 'member';
@@ -61,9 +62,16 @@ export interface TripRepository {
   ): Promise<JoinResult>;
   findActiveMembership(firebaseUid: string, tripId: string): Promise<Membership | null>;
   getTripDetailsForMember(firebaseUid: string, tripId: string): Promise<TripDetails | null>;
-  setTripLocked(tripId: string, locked: boolean): Promise<void>;
-  findMembership(tripId: string, membershipId: string): Promise<Membership | null>;
-  leaveMembership(membershipId: string): Promise<void>;
+  setTripLockedForOwner(
+    firebaseUid: string,
+    tripId: string,
+    locked: boolean,
+  ): Promise<'updated' | 'forbidden' | 'not-found'>;
+  removeMemberForActor(
+    firebaseUid: string,
+    tripId: string,
+    membershipId: string,
+  ): Promise<'removed' | 'forbidden' | 'not-found' | 'owner-required'>;
 }
 
 export interface CreatedTripResponse {
@@ -87,11 +95,14 @@ export class TripService {
   ) {}
 
   async createTrip(firebaseUid: string, tripName: string, ownerName: string): Promise<CreatedTripResponse> {
-    const normalizedTripName = tripName.trim();
-    const normalizedOwnerName = ownerName.trim();
-    if (!normalizedTripName || !normalizedOwnerName) {
+    const input = z.object({
+      tripName: z.string().trim().min(1),
+      ownerName: z.string().trim().min(1),
+    }).safeParse({ tripName, ownerName });
+    if (!input.success) {
       throw new ServiceError(400, 'tripName and adminName are required');
     }
+    const { tripName: normalizedTripName, ownerName: normalizedOwnerName } = input.data;
 
     const now = new Date();
     const tripId = this.createId();
@@ -123,11 +134,14 @@ export class TripService {
   }
 
   async joinTrip(firebaseUid: string, roomCode: string, memberName: string): Promise<JoinedTripResponse> {
-    const normalizedRoomCode = roomCode.trim().toUpperCase();
-    const normalizedName = memberName.trim();
-    if (!normalizedRoomCode || !normalizedName) {
+    const input = z.object({
+      roomCode: z.string().trim().min(1).transform((value) => value.toUpperCase()),
+      memberName: z.string().trim().min(1),
+    }).safeParse({ roomCode, memberName });
+    if (!input.success) {
       throw new ServiceError(400, 'roomCode and memberName are required');
     }
+    const { roomCode: normalizedRoomCode, memberName: normalizedName } = input.data;
 
     const result = await this.repository.joinTripForUser(
       firebaseUid,
@@ -160,9 +174,9 @@ export class TripService {
   }
 
   async setLocked(firebaseUid: string, tripId: string, locked: boolean): Promise<{ success: true }> {
-    const actor = await this.requireActiveMembership(firebaseUid, tripId);
-    if (actor.role !== 'owner') throw new ServiceError(403, 'Only admin can lock or unlock the trip');
-    await this.repository.setTripLocked(tripId, locked);
+    const result = await this.repository.setTripLockedForOwner(firebaseUid, tripId, locked);
+    if (result === 'not-found') throw new ServiceError(404, 'Trip not found');
+    if (result === 'forbidden') throw new ServiceError(403, 'Only admin can lock or unlock the trip');
     return { success: true };
   }
 
@@ -171,15 +185,12 @@ export class TripService {
     tripId: string,
     membershipId: string,
   ): Promise<{ success: true }> {
-    const actor = await this.requireActiveMembership(firebaseUid, tripId);
-    const target = await this.repository.findMembership(tripId, membershipId);
-    if (!target || target.status !== 'active') throw new ServiceError(404, 'Member not found');
-
-    if (actor.id !== target.id && actor.role !== 'owner') {
-      throw new ServiceError(403, 'Only admin can remove other members');
+    const result = await this.repository.removeMemberForActor(firebaseUid, tripId, membershipId);
+    if (result === 'not-found') throw new ServiceError(404, 'Member not found');
+    if (result === 'forbidden') throw new ServiceError(403, 'Only admin can remove other members');
+    if (result === 'owner-required') {
+      throw new ServiceError(409, 'The owner cannot leave until another active member joins');
     }
-
-    await this.repository.leaveMembership(target.id);
     return { success: true };
   }
 

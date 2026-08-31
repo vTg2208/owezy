@@ -25,7 +25,7 @@ export interface ShutdownSignalEmitter {
 }
 
 export interface HealthDatabase {
-  query(text: string): Promise<unknown>;
+  check(timeoutMs: number): Promise<void>;
 }
 
 export interface AppDependencies {
@@ -48,33 +48,21 @@ class LifecycleFailure extends Error {
 }
 
 function runtimeHealthDatabase(): HealthDatabase {
-  return { query: (text) => getPool().query(text) };
-}
-
-async function checkPostgresReadiness(
-  database: HealthDatabase,
-  timeoutMs: number,
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const finish = (complete: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      complete();
-    };
-    const timeout = setTimeout(() => {
-      finish(() => reject(new Error('PostgreSQL health check timed out')));
-    }, timeoutMs);
-    timeout.unref();
-
-    Promise.resolve()
-      .then(() => database.query('SELECT 1'))
-      .then(
-        () => finish(resolve),
-        (error: unknown) => finish(() => reject(error)),
-      );
-  });
+  return {
+    async check(timeoutMs) {
+      const client = await getPool().connect();
+      let released = false;
+      try {
+        await client.query({ text: 'SELECT 1', query_timeout: timeoutMs } as never);
+      } catch (error) {
+        client.release(error instanceof Error ? error : new Error(String(error)));
+        released = true;
+        throw error;
+      } finally {
+        if (!released) client.release();
+      }
+    },
+  };
 }
 
 export function createApp(dependencies: AppDependencies = {}) {
@@ -98,7 +86,7 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   app.get('/health', async (req, res) => {
     try {
-      await checkPostgresReadiness(database, healthCheckTimeoutMs);
+      await database.check(healthCheckTimeoutMs);
     } catch {
       res.status(503).json({ status: 'unavailable', timestamp: new Date().toISOString() });
       return;
@@ -112,6 +100,15 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+    if (
+      typeof err === 'object'
+      && err !== null
+      && 'type' in err
+      && err.type === 'entity.parse.failed'
+    ) {
+      res.status(400).json({ error: 'Invalid JSON request body' });
+      return;
+    }
     console.error(`[ERROR] ${err.message}`);
     res.status(500).json({ error: 'Internal server error' });
   });
@@ -135,8 +132,8 @@ function listen(): Promise<Server> {
 export async function startServer(
   dependencies: ServerLifecycleDependencies = {},
 ): Promise<CloseableServer> {
-  await (dependencies.initializeDatabase ?? initializeDatabase)();
   try {
+    await (dependencies.initializeDatabase ?? initializeDatabase)();
     return await (dependencies.listen ?? listen)();
   } catch (error) {
     const failures: unknown[] = [error];

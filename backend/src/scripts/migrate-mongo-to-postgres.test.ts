@@ -202,7 +202,7 @@ describe('transformLegacySnapshot', () => {
       created_at: '2026-08-07T00:00:00.000Z', updated_at: '2026-08-07T00:00:00.000Z',
     });
     snapshot.members.push({
-      _id: 'member-3', trip_id: 'trip-2', name: 'Three', is_admin: true,
+      _id: 'member-3', trip_id: 'trip-2', name: 'Three', user_id: 'firebase-u2', is_admin: true,
       created_at: '2026-08-07T00:00:00.000Z',
     });
 
@@ -242,6 +242,18 @@ describe('transformLegacySnapshot', () => {
       expect.objectContaining({ code: 'duplicate_active_member_name', legacyId: 'member-3' }),
     ]));
     expect(plan.memberships.some(({ id }) => id === 'member-3')).toBe(false);
+  });
+
+  it('rejects a trip whose owner membership has no resolvable user identity', () => {
+    const snapshot = validSnapshot();
+    delete snapshot.members[0].user_id;
+
+    const plan = transformLegacySnapshot(snapshot);
+
+    expect(plan.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'orphan_trip_owner', legacyId: 'trip-1' }),
+    ]));
+    expect(plan.trips).toHaveLength(0);
   });
 });
 
@@ -406,6 +418,13 @@ interface ReceiptRowFixture {
   status: string;
 }
 
+function returnedUser(values?: unknown[]) {
+  return {
+    id: values?.[0], firebase_uid: values?.[1], email: values?.[2], name: values?.[3],
+    created_at: values?.[4],
+  };
+}
+
 class ReceiptRestartDatabase {
   mapping: string | null = null;
   row: ReceiptRowFixture | null = null;
@@ -415,7 +434,7 @@ class ReceiptRestartDatabase {
   async query(text: string, values?: unknown[]) {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.startsWith('INSERT INTO users')) {
-      return { rows: [{ id: values?.[0] }], rowCount: 1 };
+      return { rows: [returnedUser(values)], rowCount: 1 };
     }
     if (sql.startsWith('SELECT postgres_id FROM legacy_id_mappings')) {
       return this.mapping
@@ -476,7 +495,7 @@ describe('PostgresMigrationTarget', () => {
         const sql = text.replace(/\s+/g, ' ').trim();
         statements.push({ sql, values, inTransaction: transactionOpen });
         if (sql.startsWith('INSERT INTO users')) {
-          return { rows: [{ id: values?.[0] }], rowCount: 1 };
+          return { rows: [returnedUser(values)], rowCount: 1 };
         }
         if (sql.startsWith('SELECT postgres_id FROM legacy_id_mappings')) {
           return receiptMapped
@@ -525,6 +544,130 @@ describe('PostgresMigrationTarget', () => {
       .toEqual([expect.objectContaining({ inTransaction: true })]);
     expect(statements.filter(({ sql }) => sql.startsWith('INSERT INTO'))
       .every(({ sql }) => sql.includes('ON CONFLICT'))).toBe(true);
+  });
+
+  it('rejects a rerun whose existing non-receipt mapping points at another target', async () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    const database = {
+      async query(text: string, values?: unknown[]) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        if (sql.startsWith('INSERT INTO users')) {
+          return { rows: [returnedUser(values)], rowCount: 1 };
+        }
+        if (sql.startsWith('INSERT INTO legacy_id_mappings') && values?.[0] === 'user') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith('SELECT postgres_id FROM legacy_id_mappings')) {
+          return { rows: [{ postgres_id: 'wrong-user-target' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+    };
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await expect(target.apply(plan, new RecordingStorage()))
+      .rejects.toThrow('user mapping identity mismatch');
+  });
+
+  it('rejects an existing Firebase user whose immutable creation identity conflicts', async () => {
+    const original = transformLegacySnapshot(validSnapshot());
+    const usersOnly = {
+      ...original,
+      trips: [], memberships: [], expenses: [], expenseSplits: [], receipts: [], messages: [],
+    };
+    const database = {
+      async query(text: string, values?: unknown[]) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        if (sql.startsWith('INSERT INTO users')) {
+          return {
+            rows: [{ ...returnedUser(values), created_at: new Date('2020-01-01T00:00:00.000Z') }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+    };
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await expect(target.apply(usersOnly, new RecordingStorage()))
+      .rejects.toThrow('User target identity mismatch');
+  });
+
+  it('rejects a preexisting membership target ID linked to another trip', async () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    const database = {
+      async query(text: string, values?: unknown[]) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        if (sql.startsWith('INSERT INTO users')) {
+          return { rows: [returnedUser(values)], rowCount: 1 };
+        }
+        if (sql.startsWith('INSERT INTO trip_memberships') && values?.[0] === 'member-1') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith('SELECT id, trip_id, user_id') && sql.includes('FROM trip_memberships')) {
+          return {
+            rows: [{
+              id: 'member-1', trip_id: 'another-trip', user_id: values?.[2], display_name: 'One',
+              role: 'owner', status: 'active', created_at: new Date('2026-08-03T00:00:00.000Z'),
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+    };
+    const target = new PostgresMigrationTarget(database, async (work) => work(database));
+
+    await expect(target.apply(plan, new RecordingStorage()))
+      .rejects.toThrow('Membership target identity mismatch for member-1');
+  });
+
+  it('reports a persisted row whose linked identity differs from the migration plan', async () => {
+    const plan = transformLegacySnapshot(validSnapshot());
+    const receipt = plan.receipts[0];
+    const database = {
+      async query(text: string) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        if (sql.includes('AS expense_splits') && sql.includes('AS users')) {
+          return {
+            rows: [{
+              users: '2', trips: '1', memberships: '2', expenses: '1',
+              expense_splits: '2', receipts: '1', messages: '1',
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.startsWith('WITH expected_users AS')) {
+          return {
+            rows: [{
+              entity: 'message', legacy_id: 'message-1',
+              reason: 'membership reference differs from transformed source',
+            }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('FROM legacy_id_mappings m') && sql.includes('LEFT JOIN receipts r')) {
+          return {
+            rows: [{ postgres_id: receipt.id, ...expectedReceiptRow(`${receipt.id}.png`) }],
+            rowCount: 1,
+          };
+        }
+        if (sql.startsWith('WITH expected_users AS')) return { rows: [], rowCount: 0 };
+        if (sql.includes('AS orphan_count')) return { rows: [{ orphan_count: '0' }], rowCount: 1 };
+        if (sql.includes('HAVING sum(s.amount_minor)')) return { rows: [], rowCount: 0 };
+        if (sql.includes('HAVING sum(delta)')) return { rows: [], rowCount: 0 };
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+    const storage = new RecordingStorage();
+    await storage.write(receipt.bytes, receipt.contentType, receipt.id);
+
+    await expect(new PostgresMigrationTarget(database, async (work) => work(database)).verify(plan, storage))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: 'database_row_identity_mismatch', entity: 'message', legacyId: 'message-1',
+        }),
+      ]));
   });
 
   it('repairs a missing receipt mapping only after validating the row and real stored bytes', async () => {
@@ -650,6 +793,7 @@ describe('PostgresMigrationTarget', () => {
     const plan = transformLegacySnapshot(validSnapshot());
     const receipt = plan.receipts[0];
     let countsSql = '';
+    let identitySql = '';
     const database = {
       async query(text: string) {
         const sql = text.replace(/\s+/g, ' ').trim();
@@ -669,6 +813,10 @@ describe('PostgresMigrationTarget', () => {
             rowCount: 1,
           };
         }
+        if (sql.startsWith('WITH expected_users AS')) {
+          identitySql = sql;
+          return { rows: [], rowCount: 0 };
+        }
         if (sql.includes('AS orphan_count')) return { rows: [{ orphan_count: '0' }], rowCount: 1 };
         if (sql.includes('HAVING sum(s.amount_minor)')) return { rows: [], rowCount: 0 };
         if (sql.includes('HAVING sum(delta)')) return { rows: [], rowCount: 0 };
@@ -681,6 +829,8 @@ describe('PostgresMigrationTarget', () => {
 
     await expect(target.verify(plan, storage)).resolves.toEqual([]);
     expect(countsSql).toContain("JOIN receipts receipt_target ON receipt_target.id::text = receipt_map.postgres_id");
+    expect(identitySql).toContain("target.currency IS DISTINCT FROM e.currency");
+    expect(identitySql).toContain("target.updated_at IS DISTINCT FROM e.updated_at");
   });
 
   it('reports a mismatched migrated database count', async () => {
@@ -704,6 +854,7 @@ describe('PostgresMigrationTarget', () => {
             rowCount: 1,
           };
         }
+        if (sql.startsWith('WITH expected_users AS')) return { rows: [], rowCount: 0 };
         if (sql.includes('AS orphan_count')) return { rows: [{ orphan_count: '0' }], rowCount: 1 };
         if (sql.includes('HAVING sum(s.amount_minor)')) return { rows: [], rowCount: 0 };
         if (sql.includes('HAVING sum(delta)')) return { rows: [], rowCount: 0 };
@@ -740,6 +891,7 @@ describe('PostgresMigrationTarget', () => {
             rowCount: 1,
           };
         }
+        if (sql.startsWith('WITH expected_users AS')) return { rows: [], rowCount: 0 };
         if (sql.includes('AS orphan_count')) return { rows: [{ orphan_count: '0' }], rowCount: 1 };
         if (sql.includes('HAVING sum(s.amount_minor)')) return { rows: [], rowCount: 0 };
         if (sql.includes('HAVING sum(delta)')) return { rows: [], rowCount: 0 };

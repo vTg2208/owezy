@@ -11,7 +11,7 @@ const servers: Server[] = [];
 
 async function request(router: express.Router, path: string, init?: RequestInit) {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ strict: false }));
   app.use('/api', router);
   app.use((error: Error, _request: Request, response: Response, _next: NextFunction) => {
     response.status(500).json({ error: error.message });
@@ -142,6 +142,26 @@ describe('API routes', () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: 'You are not a member of this trip' });
+  });
+
+  it('turns a null trip body into a controlled validation error', async () => {
+    const base = dependencies();
+    const received: unknown[][] = [];
+    const router = createApiRouter(dependencies({
+      tripService: {
+        ...base.tripService,
+        async createTrip(...values: unknown[]) {
+          received.push(values);
+          throw new ServiceError(400, 'tripName and adminName are required');
+        },
+      },
+    }));
+
+    const response = await request(router, '/trips', { method: 'POST', body: 'null' });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'tripName and adminName are required' });
+    expect(received).toEqual([['firebase-1', '', '']]);
   });
 
   it('uploads exact raw image bytes and returns pending receipt metadata', async () => {

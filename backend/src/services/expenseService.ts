@@ -1,5 +1,6 @@
 import { allocateEqual, majorToMinor } from '../domain/money';
 import { generateId } from '../utils/helpers';
+import { z } from 'zod';
 import { ServiceError } from './errors';
 
 export type SplitType = 'equal' | 'custom' | 'percentage';
@@ -82,6 +83,19 @@ export interface BalanceReport {
   settlementMinor: MinorSettlement[];
 }
 
+const expenseInputSchema = z.object({
+  paidBy: z.unknown().optional(),
+  description: z.string(),
+  amount: z.union([z.string(), z.number()]),
+  splitType: z.enum(['equal', 'custom', 'percentage']).optional(),
+  splits: z.array(z.object({
+    participantId: z.string().min(1),
+    amount: z.union([z.string(), z.number()]),
+  })).optional(),
+  receiptId: z.unknown().optional(),
+  receiptUrl: z.unknown().optional(),
+}).passthrough();
+
 function parseMajor(value: string | number, field: string): bigint {
   try {
     return BigInt(majorToMinor(String(value)));
@@ -155,25 +169,29 @@ export class ExpenseService {
     const actor = await this.repository.findActiveMembership(firebaseUid, tripId);
     if (!actor) throw new ServiceError(403, 'You are not a member of this trip');
 
-    if (containsReceiptMetadata(input.receiptUrl)) {
+    const parsed = expenseInputSchema.safeParse(input);
+    if (!parsed.success) throw new ServiceError(400, 'Invalid expense payload');
+    const validatedInput = parsed.data;
+
+    if (containsReceiptMetadata(validatedInput.receiptUrl)) {
       throw new ServiceError(
         400,
         'receiptUrl is not accepted; upload the receipt first and send receiptId',
       );
     }
-    const receiptId = parseReceiptId(input.receiptId);
+    const receiptId = parseReceiptId(validatedInput.receiptId);
 
-    const description = input.description?.trim();
+    const description = validatedInput.description.trim();
     if (!description) throw new ServiceError(400, 'description and amount are required');
-    const totalMinor = parseMajor(input.amount, 'amount');
-    const splitType = input.splitType ?? 'equal';
+    const totalMinor = parseMajor(validatedInput.amount, 'amount');
+    const splitType = validatedInput.splitType ?? 'equal';
     if (!['equal', 'custom', 'percentage'].includes(splitType)) {
       throw new ServiceError(400, 'Invalid split type');
     }
 
     const activeMemberships = await this.repository.listActiveMemberships(tripId);
     const activeIds = new Set(activeMemberships.map((membership) => membership.id));
-    const requestedSplits = input.splits;
+    const requestedSplits = validatedInput.splits;
     if (requestedSplits && requestedSplits.length === 0) {
       throw new ServiceError(400, 'At least one split member is required');
     }

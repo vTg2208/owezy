@@ -22,8 +22,17 @@ class MemoryMessageRepository implements MessageRepository {
     ) ?? null;
   }
 
-  async createMessage(message: MessageRecord): Promise<void> {
-    this.messages.push(message);
+  rejectNextInsert = false;
+
+  async createMessageForMember(
+    firebaseUid: string,
+    message: Omit<MessageRecord, 'membershipId' | 'memberName'>,
+  ): Promise<MessageRecord | null> {
+    const membership = await this.findActiveMembership(firebaseUid, message.tripId);
+    if (!membership || this.rejectNextInsert) return null;
+    const created = { ...message, membershipId: membership.id, memberName: membership.name };
+    this.messages.push(created);
+    return created;
   }
 
   async listMessagesForMember(
@@ -55,6 +64,23 @@ describe('MessageService', () => {
 
     await expect(service.sendMessage('outsider', 'trip-1', { message: 'Hello' })).rejects.toMatchObject({ status: 403 });
     await expect(service.listMessages('outsider', 'trip-1', {})).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('rejects the message when membership becomes inactive at the insert boundary', async () => {
+    const repository = new MemoryMessageRepository();
+    repository.rejectNextInsert = true;
+    const service = new MessageService(repository, () => 'message-1');
+
+    await expect(service.sendMessage('user-a', 'trip-1', { message: 'Hello' }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(repository.messages).toHaveLength(0);
+  });
+
+  it('returns a controlled validation error for a non-string message', async () => {
+    const service = new MessageService(new MemoryMessageRepository(), () => 'message-1');
+
+    await expect(service.sendMessage('user-a', 'trip-1', { message: null as unknown as string }))
+      .rejects.toMatchObject({ status: 400 });
   });
 
   it('bounds message limits and exposes a stable cursor from the extra row', async () => {

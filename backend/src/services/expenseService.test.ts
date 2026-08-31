@@ -45,6 +45,29 @@ function service(repository = new MemoryExpenseRepository()): ExpenseService {
 }
 
 describe('ExpenseService', () => {
+  it('returns controlled validation errors for non-string descriptions and malformed splits', async () => {
+    const expenseService = service();
+
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      description: 42 as unknown as string,
+      amount: 10,
+      splitType: 'equal',
+      splits: [{ participantId: 'member-a', amount: 10 }],
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      description: 'Meal',
+      amount: 10,
+      splitType: 'custom',
+      splits: null as unknown as [],
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      description: 'Meal',
+      amount: 10,
+      splitType: 'custom',
+      splits: [{ participantId: null as unknown as string, amount: 10 }],
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
   it('derives the payer from the authenticated membership and splits only selected equal members', async () => {
     const repository = new MemoryExpenseRepository();
     const result = await service(repository).createExpense('user-a', 'trip-1', {
