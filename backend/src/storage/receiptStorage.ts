@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 export const DEFAULT_RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_RECEIPT_PENDING_TTL_HOURS = 24;
+const MAX_RECEIPT_BYTES = 20 * 1024 * 1024;
 
 export type SupportedReceiptContentType = 'image/jpeg' | 'image/png' | 'image/webp';
 
@@ -43,12 +44,14 @@ function positiveInteger(
   value: string | undefined,
   name: string,
   fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER,
 ): number {
   if (value === undefined || value === '') return fallback;
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }
+  if (parsed > maximum) throw new Error(`${name} must not exceed ${maximum}`);
   return parsed;
 }
 
@@ -99,6 +102,7 @@ export function getReceiptStorageConfig(
       environment.RECEIPT_MAX_BYTES,
       'RECEIPT_MAX_BYTES',
       DEFAULT_RECEIPT_MAX_BYTES,
+      MAX_RECEIPT_BYTES,
     ),
     pendingTtlHours: positiveInteger(
       environment.RECEIPT_PENDING_TTL_HOURS,

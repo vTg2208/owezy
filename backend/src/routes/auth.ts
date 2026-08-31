@@ -10,6 +10,13 @@ export interface AuthRoutesDependencies {
   authenticate: RequestHandler;
 }
 
+const MAX_SENSITIVE_AUTH_AGE_SECONDS = 5 * 60;
+
+function hasRecentAuthentication(authTime: number, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
+  const age = nowSeconds - authTime;
+  return Number.isSafeInteger(authTime) && age >= 0 && age <= MAX_SENSITIVE_AUTH_AGE_SECONDS;
+}
+
 function defaultDependencies(): AuthRoutesDependencies {
   return {
     service: new AccountService(new PostgresAccountRepository(), auth),
@@ -84,6 +91,10 @@ export function createAuthRouter(dependencies: AuthRoutesDependencies = defaultD
 
   router.delete('/me', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
+      if (!request.principal || !hasRecentAuthentication(request.principal.authTime)) {
+        response.status(403).json({ error: 'Recent authentication required' });
+        return;
+      }
       response.json(await service.deleteAccount(request.userId!));
     } catch (error) {
       handleError(error, response, next);

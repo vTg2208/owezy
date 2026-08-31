@@ -174,6 +174,7 @@ describe('applyPendingMigrations', () => {
       '004_receipt_storage.sql',
       '005_owner_continuity.sql',
       '006_production_hardening.sql',
+      '007_security_boundaries.sql',
     ]);
   });
 });

@@ -1,4 +1,4 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
 ALTER TABLE trips
   ADD COLUMN currency char(3);
@@ -169,7 +169,7 @@ ALTER TABLE trip_invites
   ADD COLUMN token_hash text;
 
 UPDATE trip_invites
-   SET token_hash = encode(digest('legacy-invite:' || id, 'sha256'), 'hex')
+   SET token_hash = encode(public.digest('legacy-invite:' || id, 'sha256'), 'hex')
  WHERE token_hash IS NULL;
 
 ALTER TABLE trip_invites

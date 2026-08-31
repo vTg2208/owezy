@@ -11,6 +11,14 @@ function repository(overrides: Partial<InviteRepository> = {}): InviteRepository
 }
 
 describe('InviteService', () => {
+  it('rejects oversized invitation addresses before persistence', async () => {
+    const service = new InviteService(repository());
+
+    await expect(service.create('owner-uid', 'trip-1', {
+      email: `${'a'.repeat(312)}@example.com`,
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
   it('rejects an expired invitation', async () => {
     const service = new InviteService(repository({ acceptForUser: async () => ({ kind: 'expired' }) }));
 

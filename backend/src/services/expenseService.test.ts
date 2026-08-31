@@ -232,6 +232,23 @@ describe('ExpenseService', () => {
     })).rejects.toMatchObject({ status: 403 });
   });
 
+  it('rejects oversized descriptions and split arrays before persistence', async () => {
+    const repository = new MemoryExpenseRepository();
+    const expenseService = service(repository);
+
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      description: 'D'.repeat(501), amount: '10.00', splitType: 'equal',
+      splits: [{ participantId: 'member-a', amount: '10.00' }],
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(expenseService.createExpense('user-a', 'trip-1', {
+      description: 'Meal', amount: '201.00', splitType: 'equal',
+      splits: Array.from({ length: 201 }, (_, index) => ({
+        participantId: `member-${index}`, amount: '1.00',
+      })),
+    })).rejects.toMatchObject({ status: 400 });
+    expect(repository.expenses).toEqual([]);
+  });
+
   it('forwards a validated pending receipt ID with the authenticated payer', async () => {
     const repository = new MemoryExpenseRepository();
     const expenseService = service(repository);

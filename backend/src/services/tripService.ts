@@ -109,8 +109,8 @@ export class TripService {
 
   async createTrip(firebaseUid: string, tripName: string, ownerName: string): Promise<CreatedTripResponse> {
     const input = z.object({
-      tripName: z.string().trim().min(1),
-      ownerName: z.string().trim().min(1),
+      tripName: z.string().trim().min(1).max(100),
+      ownerName: z.string().trim().min(1).max(100),
     }).safeParse({ tripName, ownerName });
     if (!input.success) {
       throw new ServiceError(400, 'tripName and adminName are required');
@@ -148,8 +148,9 @@ export class TripService {
 
   async joinTrip(firebaseUid: string, roomCode: string, memberName: string): Promise<JoinedTripResponse> {
     const input = z.object({
-      roomCode: z.string().trim().min(1).transform((value) => value.toUpperCase()),
-      memberName: z.string().trim().min(1),
+      roomCode: z.string().trim().transform((value) => value.toUpperCase())
+        .pipe(z.string().regex(/^[A-Z0-9]{6,10}$/)),
+      memberName: z.string().trim().min(1).max(100),
     }).safeParse({ roomCode, memberName });
     if (!input.success) {
       throw new ServiceError(400, 'roomCode and memberName are required');

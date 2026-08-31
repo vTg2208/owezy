@@ -7,6 +7,7 @@ export interface AuthPrincipal {
   name: string;
   emailVerified: boolean;
   provider: string;
+  authTime: number;
 }
 
 export interface AuthRequest extends Request {
@@ -19,10 +20,22 @@ interface VerifiedTokenClaims {
   email?: string;
   name?: string;
   email_verified?: boolean;
+  auth_time?: number;
   firebase?: { sign_in_provider?: string };
 }
 
 type VerifyToken = (token: string) => Promise<VerifiedTokenClaims>;
+
+export interface FirebaseTokenVerifier {
+  verifyIdToken(token: string, checkRevoked?: boolean): Promise<VerifiedTokenClaims>;
+}
+
+export function verifyFirebaseToken(
+  verifier: FirebaseTokenVerifier,
+  token: string,
+): Promise<VerifiedTokenClaims> {
+  return verifier.verifyIdToken(token, true);
+}
 
 function bearerToken(request: AuthRequest): string | undefined {
   const header = request.headers.authorization;
@@ -32,19 +45,22 @@ function bearerToken(request: AuthRequest): string | undefined {
 
 function principalFromClaims(claims: VerifiedTokenClaims): AuthPrincipal | undefined {
   const email = claims.email?.trim().toLowerCase();
-  if (!claims.uid || !email) return undefined;
+  if (!claims.uid || !email || !Number.isSafeInteger(claims.auth_time) || claims.auth_time! <= 0) {
+    return undefined;
+  }
 
   return {
     uid: claims.uid,
     email,
-    name: claims.name?.trim() || email.split('@')[0],
+    name: (claims.name?.trim() || email.split('@')[0]).slice(0, 100),
     emailVerified: claims.email_verified === true,
     provider: claims.firebase?.sign_in_provider || 'unknown',
+    authTime: claims.auth_time!,
   };
 }
 
 export function createAuthenticateToken(
-  verifyToken: VerifyToken = (token) => auth.verifyIdToken(token),
+  verifyToken: VerifyToken = (token) => verifyFirebaseToken(auth, token),
 ) {
   return async (request: AuthRequest, response: Response, next: NextFunction) => {
     if (request.principal) {
@@ -63,7 +79,7 @@ export function createAuthenticateToken(
         response.status(403).json({ error: 'Authenticated account requires an email' });
         return;
       }
-      if (principal.provider === 'password' && !principal.emailVerified) {
+      if (!principal.emailVerified) {
         response.status(403).json({ error: 'Email verification required' });
         return;
       }
@@ -83,8 +99,8 @@ export async function optionalAuth(request: AuthRequest, _response: Response, ne
   const token = bearerToken(request);
   if (token) {
     try {
-      const principal = principalFromClaims(await auth.verifyIdToken(token));
-      if (principal && (principal.provider !== 'password' || principal.emailVerified)) {
+      const principal = principalFromClaims(await verifyFirebaseToken(auth, token));
+      if (principal?.emailVerified) {
         request.userId = principal.uid;
         request.principal = principal;
       }

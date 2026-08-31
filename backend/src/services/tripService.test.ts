@@ -272,4 +272,21 @@ describe('TripService', () => {
     await expect(service.joinTrip('firebase-1', 'ROOM42', { malformed: true } as unknown as string))
       .rejects.toMatchObject({ status: 400 });
   });
+
+  it('rejects oversized stored trip and member names at the server boundary', async () => {
+    const service = new TripService(
+      new MemoryTripRepository(),
+      sequenceIds('trip-1', 'owner-1', 'trip-2', 'owner-2', 'member-1', 'member-2'),
+      () => 'ROOM42',
+    );
+
+    await expect(service.createTrip('firebase-1', 'T'.repeat(101), 'Owner'))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(service.createTrip('firebase-1', 'Goa', 'O'.repeat(101)))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(service.joinTrip('firebase-1', 'R'.repeat(129), 'Member'))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(service.joinTrip('firebase-1', 'ROOM42', 'M'.repeat(101)))
+      .rejects.toMatchObject({ status: 400 });
+  });
 });

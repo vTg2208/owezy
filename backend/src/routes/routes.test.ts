@@ -31,7 +31,7 @@ function authenticated(request: AuthRequest, _response: Response, next: NextFunc
   request.userId = 'firebase-1';
   request.principal = {
     uid: 'firebase-1', email: 'trusted@example.com', name: 'Trusted One',
-    emailVerified: true, provider: 'password',
+    emailVerified: true, provider: 'password', authTime: Math.floor(Date.now() / 1000),
   };
   next();
 }
@@ -77,6 +77,34 @@ describe('auth routes', () => {
       id: 'trip-1', name: 'Goa', room_code: 'ABC123', admin_id: 'owner-1', is_locked: 1,
       created_at: '2026-08-31T00:00:00.000Z', member_id: 'member-1',
     }] });
+  });
+
+  it('rejects account deletion from a stale authenticated session', async () => {
+    let deleteCalls = 0;
+    const service = {
+      async syncUser() { throw new Error('not used'); },
+      async findUser() { return null; },
+      async listUserTrips() { return []; },
+      async deleteAccount() { deleteCalls += 1; return { success: true as const }; },
+    };
+    const staleAuthentication = (request: AuthRequest, _response: Response, next: NextFunction) => {
+      request.userId = 'firebase-1';
+      request.principal = {
+        uid: 'firebase-1', email: 'trusted@example.com', name: 'Trusted One',
+        emailVerified: true, provider: 'password', authTime: Math.floor(Date.now() / 1000) - 301,
+      };
+      next();
+    };
+
+    const response = await request(
+      createAuthRouter({ service, authenticate: staleAuthentication }),
+      '/me',
+      { method: 'DELETE' },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Recent authentication required' });
+    expect(deleteCalls).toBe(0);
   });
 });
 

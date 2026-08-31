@@ -41,6 +41,20 @@ describe('server lifecycle', () => {
     expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN');
   });
 
+  it('does not copy unexpected internal error messages into structured logs', async () => {
+    const errors: Array<Record<string, unknown>> = [];
+    const response = await requestApp(createApp({
+      database: { check: async () => undefined },
+      authenticate: () => { throw new Error('connection failed: password=secret'); },
+      logger: { info: () => undefined, error: (record) => errors.push(record) },
+      rateLimit: { windowMs: 60_000, max: 100 },
+    }), '/api/not-a-route');
+
+    expect(response.status).toBe(500);
+    expect(errors).toHaveLength(1);
+    expect(JSON.stringify(errors)).not.toContain('password=secret');
+  });
+
   it('separates liveness from database readiness', async () => {
     let checks = 0;
     const app = createApp({
@@ -82,6 +96,43 @@ describe('server lifecycle', () => {
       const limited = await fetch(`http://127.0.0.1:${port}/live`);
       expect(limited.status).toBe(429);
       expect(await limited.json()).toMatchObject({ error: 'Too many requests' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('rate limits clients independently behind an explicitly trusted proxy', async () => {
+    const app = createApp({
+      database: { check: async () => undefined },
+      rateLimit: { windowMs: 60_000, max: 1 },
+      trustProxyHops: 1,
+    });
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const endpoint = `http://127.0.0.1:${port}/live`;
+    try {
+      expect((await fetch(endpoint, { headers: { 'X-Forwarded-For': '203.0.113.10' } })).status).toBe(200);
+      expect((await fetch(endpoint, { headers: { 'X-Forwarded-For': '198.51.100.20' } })).status).toBe(200);
+      expect((await fetch(endpoint, { headers: { 'X-Forwarded-For': '203.0.113.10' } })).status).toBe(429);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('does not let a direct client spoof X-Forwarded-For to bypass the limiter', async () => {
+    const app = createApp({
+      database: { check: async () => undefined },
+      rateLimit: { windowMs: 60_000, max: 1 },
+      trustProxyHops: 0,
+    });
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const endpoint = `http://127.0.0.1:${port}/live`;
+    try {
+      expect((await fetch(endpoint, { headers: { 'X-Forwarded-For': '203.0.113.10' } })).status).toBe(200);
+      expect((await fetch(endpoint, { headers: { 'X-Forwarded-For': '198.51.100.20' } })).status).toBe(429);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

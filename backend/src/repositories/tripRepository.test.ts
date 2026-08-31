@@ -113,6 +113,33 @@ describe('PostgresTripRepository', () => {
     expect(boundedExpensePage).toBe(true);
   });
 
+  it('compares opaque expense cursor IDs as text', async () => {
+    const queries: string[] = [];
+    const database = {
+      async query(text: string) {
+        const sql = text.replace(/\s+/g, ' ').trim();
+        queries.push(sql);
+        if (sql.startsWith('SELECT 1 FROM trip_memberships')) {
+          return { rows: [{ '?column?': 1 }], rowCount: 1 };
+        }
+        if (sql.includes('FROM expenses e')) return { rows: [], rowCount: 0 };
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+    const repository = new PostgresTripRepository(database, async (work) => work(database));
+    const cursor = Buffer.from(JSON.stringify([
+      '2026-08-31T00:10:00.000Z',
+      '0123456789abcdef01234567',
+    ])).toString('base64url');
+
+    await expect(repository.getExpensePageForMember('firebase-1', 'trip-1', cursor))
+      .resolves.toEqual({ expenses: [] });
+
+    const expenseQuery = queries.find((query) => query.includes('FROM expenses e'));
+    expect(expenseQuery).toContain('$3::text');
+    expect(expenseQuery).not.toContain('$3::uuid');
+  });
+
   it('locks a trip only when the Firebase user is still its active owner', async () => {
     const queries: Array<{ text: string; values?: unknown[] }> = [];
     const database = {

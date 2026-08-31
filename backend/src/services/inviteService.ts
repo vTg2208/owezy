@@ -47,7 +47,8 @@ export class InviteService {
     input: { email?: unknown; expiresInHours?: unknown },
     database?: QueryExecutor,
   ) {
-    if (typeof input?.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())) {
+    const email = typeof input?.email === 'string' ? input.email.trim() : '';
+    if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new ServiceError(400, 'A valid invite email is required');
     }
     const expiresInHours = input.expiresInHours === undefined ? 168 : Number(input.expiresInHours);
@@ -57,7 +58,7 @@ export class InviteService {
     const token = this.createToken();
     const result = await this.repository.createForOwner(firebaseUid, tripId, {
       id: this.createId(),
-      email: input.email.trim().toLowerCase(),
+      email: email.toLowerCase(),
       tokenHash: hashToken(token),
       expiresAt: new Date(this.now().getTime() + expiresInHours * 60 * 60 * 1_000),
     }, database);

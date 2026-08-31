@@ -307,7 +307,7 @@ export class PostgresTripRepository implements TripRepository {
            LEFT JOIN receipts receipt
              ON receipt.expense_id = e.id AND receipt.trip_id = e.trip_id AND receipt.status = 'attached'
           WHERE e.trip_id = $1 AND e.status = 'active'
-            AND ($2::timestamptz IS NULL OR (e.created_at, e.id) < ($2::timestamptz, $3::uuid))
+            AND ($2::timestamptz IS NULL OR (e.created_at, e.id) < ($2::timestamptz, $3::text))
           ORDER BY e.created_at DESC, e.id DESC
           LIMIT $4`,
         [tripId, cursorCreatedAt, cursorId, EXPENSE_PAGE_SIZE + 1],

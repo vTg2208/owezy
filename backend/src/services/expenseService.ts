@@ -114,13 +114,13 @@ export interface BalanceReport {
 
 const expenseInputSchema = z.object({
   paidBy: z.unknown().optional(),
-  description: z.string(),
+  description: z.string().max(500),
   amount: z.union([z.string(), z.number()]),
   splitType: z.enum(['equal', 'custom', 'percentage']).optional(),
   splits: z.array(z.object({
     participantId: z.string().min(1),
     amount: z.union([z.string(), z.number()]),
-  })).optional(),
+  })).max(200).optional(),
   receiptId: z.unknown().optional(),
   receiptUrl: z.unknown().optional(),
 }).passthrough();

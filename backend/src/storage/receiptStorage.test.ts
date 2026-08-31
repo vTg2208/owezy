@@ -158,6 +158,10 @@ describe('receipt storage configuration', () => {
       RECEIPT_STORAGE_ROOT: root,
       RECEIPT_MAX_BYTES: '0',
     })).toThrow('RECEIPT_MAX_BYTES must be a positive integer');
+    expect(() => getReceiptStorageConfig({
+      RECEIPT_STORAGE_ROOT: root,
+      RECEIPT_MAX_BYTES: String(20 * 1024 * 1024 + 1),
+    })).toThrow('RECEIPT_MAX_BYTES must not exceed 20971520');
   });
 
   it('rejects single-instance local receipt storage in production', () => {

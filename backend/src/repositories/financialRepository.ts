@@ -224,7 +224,7 @@ export class PostgresFinancialRepository implements PaymentRepository, InviteRep
       );
       const inviteId = inserted.rows[0].id;
       await this.audit(executor, owner.rows[0].id, 'invite.created', 'invite', inviteId, {
-        email: invite.email, expiresAt: invite.expiresAt.toISOString(),
+        expiresAt: invite.expiresAt.toISOString(),
       });
       return { kind: 'created', inviteId };
     });
@@ -322,8 +322,8 @@ export class PostgresFinancialRepository implements PaymentRepository, InviteRep
           [invite.trip_id, principal.name],
         );
         const displayName = nameConflict.rows[0]?.conflict
-          ? `${principal.name} ${membershipId.slice(0, 4)}`
-          : principal.name;
+          ? `${principal.name.slice(0, 95)} ${membershipId.slice(0, 4)}`
+          : principal.name.slice(0, 100);
         await executor.query(
           `INSERT INTO trip_memberships
              (id, trip_id, user_id, display_name, role, status)

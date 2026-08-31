@@ -51,6 +51,7 @@ export interface AppDependencies {
   uidRateLimit?: { windowMs: number; max: number };
   authenticate?: RequestHandler;
   logger?: StructuredLogger;
+  trustProxyHops?: number;
 }
 
 export interface LifecycleLogger {
@@ -72,6 +73,21 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function configuredTrustProxyHops(environment: NodeJS.ProcessEnv = process.env): number {
+  const value = environment.TRUST_PROXY_HOPS;
+  if (value === undefined || value === '') {
+    if (environment.NODE_ENV === 'production') {
+      throw new Error('TRUST_PROXY_HOPS is required in production');
+    }
+    return 0;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 10) {
+    throw new Error('TRUST_PROXY_HOPS must be an integer between 0 and 10');
   }
   return parsed;
 }
@@ -130,8 +146,10 @@ export function createApp(dependencies: AppDependencies = {}) {
     max: positiveInteger(process.env.UID_RATE_LIMIT_MAX, DEFAULT_UID_RATE_LIMIT_MAX, 'UID_RATE_LIMIT_MAX'),
   };
   const logger = dependencies.logger ?? defaultLogger();
+  const trustProxyHops = dependencies.trustProxyHops ?? configuredTrustProxyHops();
 
   app.disable('x-powered-by');
+  app.set('trust proxy', trustProxyHops);
   app.use(createRequestContext(dependencies.requestId));
   app.use(helmet());
   app.use((request, response, next) => {
@@ -198,7 +216,13 @@ export function createApp(dependencies: AppDependencies = {}) {
       res.status(400).json({ error: 'Invalid JSON request body' });
       return;
     }
-    logger.error({ event: 'request_error', requestId: request.requestId, message: err.message });
+    const errorCode = 'code' in err && typeof err.code === 'string' ? err.code : undefined;
+    logger.error({
+      event: 'request_error',
+      requestId: request.requestId,
+      errorName: err.name,
+      ...(errorCode ? { errorCode } : {}),
+    });
     res.status(500).json({ error: 'Internal server error' });
   });
 
