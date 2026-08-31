@@ -2,15 +2,27 @@ import 'dotenv/config';
 import type { Server } from 'node:http';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
 import { getPool, initializeDatabase, shutdownDatabase } from './database';
+import {
+  ContextRequest,
+  createAccessLogger,
+  createRequestContext,
+  StructuredLogger,
+} from './middleware/requestContext';
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 1_000;
+const DEFAULT_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
+const DEFAULT_RATE_LIMIT_MAX = 300;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface CloseableServer {
   close(callback: (error?: Error) => void): unknown;
+  closeAllConnections?(): void;
 }
 
 export interface ServerLifecycleDependencies {
@@ -31,6 +43,10 @@ export interface HealthDatabase {
 export interface AppDependencies {
   database?: HealthDatabase;
   healthCheckTimeoutMs?: number;
+  allowedOrigins?: readonly string[];
+  requestId?: () => string;
+  rateLimit?: { windowMs: number; max: number };
+  logger?: StructuredLogger;
 }
 
 export interface LifecycleLogger {
@@ -45,6 +61,37 @@ class LifecycleFailure extends Error {
     this.name = 'LifecycleFailure';
     this.errors = errors;
   }
+}
+
+function positiveInteger(value: string | undefined, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+export function configuredAllowedOrigins(environment: NodeJS.ProcessEnv = process.env): string[] {
+  const configured = environment.CORS_ALLOWED_ORIGINS
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (configured?.length) return [...new Set(configured)];
+  if (environment.NODE_ENV === 'production') {
+    throw new Error('CORS_ALLOWED_ORIGINS is required in production');
+  }
+  return ['http://localhost:5173'];
+}
+
+function defaultLogger(): StructuredLogger {
+  if (process.env.NODE_ENV === 'test') {
+    return { info: () => undefined, error: () => undefined };
+  }
+  return {
+    info: (record) => console.log(JSON.stringify(record)),
+    error: (record) => console.error(JSON.stringify(record)),
+  };
 }
 
 function runtimeHealthDatabase(): HealthDatabase {
@@ -69,37 +116,61 @@ export function createApp(dependencies: AppDependencies = {}) {
   const app = express();
   const database = dependencies.database ?? runtimeHealthDatabase();
   const healthCheckTimeoutMs = dependencies.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
+  const allowedOrigins = dependencies.allowedOrigins ?? configuredAllowedOrigins();
+  const limiter = dependencies.rateLimit ?? {
+    windowMs: positiveInteger(process.env.RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS, 'RATE_LIMIT_WINDOW_MS'),
+    max: positiveInteger(process.env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX, 'RATE_LIMIT_MAX'),
+  };
+  const logger = dependencies.logger ?? defaultLogger();
 
-  app.use(cors());
+  app.disable('x-powered-by');
+  app.use(createRequestContext(dependencies.requestId));
+  app.use(helmet());
+  app.use((request, response, next) => {
+    const origin = request.get('origin');
+    if (origin && !allowedOrigins.includes(origin)) {
+      response.status(403).json({ error: 'Origin not allowed' });
+      return;
+    }
+    next();
+  });
+  app.use(cors({ origin: [...allowedOrigins] }));
+  app.use(rateLimit({
+    windowMs: limiter.windowMs,
+    limit: limiter.max,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_request, response) => response.status(429).json({ error: 'Too many requests' }),
+  }));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
-
-  if (process.env.NODE_ENV !== 'production') {
-    app.use((req, res, next) => {
-      console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-      next();
-    });
-  }
+  app.use(createAccessLogger(logger));
 
   app.use('/api/auth', authRoutes);
   app.use('/api', apiRoutes);
 
-  app.get('/health', async (req, res) => {
+  app.get('/live', (_request, response) => {
+    response.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  const readiness = async (_request: Request, response: Response) => {
     try {
       await database.check(healthCheckTimeoutMs);
     } catch {
-      res.status(503).json({ status: 'unavailable', timestamp: new Date().toISOString() });
+      response.status(503).json({ status: 'unavailable', timestamp: new Date().toISOString() });
       return;
     }
 
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
-  });
+    response.json({ status: 'ok', timestamp: new Date().toISOString() });
+  };
+  app.get('/ready', readiness);
+  app.get('/health', readiness);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
 
-  app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  app.use((err: Error, request: ContextRequest, res: Response, _next: NextFunction) => {
     if (
       typeof err === 'object'
       && err !== null
@@ -109,7 +180,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       res.status(400).json({ error: 'Invalid JSON request body' });
       return;
     }
-    console.error(`[ERROR] ${err.message}`);
+    logger.error({ event: 'request_error', requestId: request.requestId, message: err.message });
     res.status(500).json({ error: 'Internal server error' });
   });
 
@@ -146,15 +217,32 @@ export async function startServer(
   }
 }
 
-function closeHttpServer(server: CloseableServer): Promise<void> {
+function closeHttpServer(server: CloseableServer, deadlineMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.close((error?: Error) => {
+    let completed = false;
+    const complete = (error?: Error) => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(deadline);
       if (error) {
         reject(error);
         return;
       }
       resolve();
-    });
+    };
+    const deadline = setTimeout(() => {
+      try {
+        server.closeAllConnections?.();
+        complete();
+      } catch (error) {
+        complete(error instanceof Error ? error : new Error(String(error)));
+      }
+    }, deadlineMs);
+    try {
+      server.close(complete);
+    } catch (error) {
+      complete(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -166,6 +254,7 @@ function throwFailures(message: string, failures: unknown[]): never {
 export function createGracefulShutdown(
   server: CloseableServer,
   closeDatabase: () => Promise<void> = shutdownDatabase,
+  deadlineMs = positiveInteger(process.env.SHUTDOWN_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS, 'SHUTDOWN_TIMEOUT_MS'),
 ): () => Promise<void> {
   let shutdown: Promise<void> | undefined;
 
@@ -173,7 +262,7 @@ export function createGracefulShutdown(
     shutdown ??= (async () => {
       const failures: unknown[] = [];
       try {
-        await closeHttpServer(server);
+        await closeHttpServer(server, deadlineMs);
       } catch (error) {
         failures.push(error);
       }

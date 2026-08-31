@@ -31,12 +31,12 @@ export function createAuthRouter(dependencies: AuthRoutesDependencies = defaultD
 
   router.post('/sync', authenticate, async (request: AuthRequest, response: Response, next: NextFunction) => {
     try {
-      const { email, name } = request.body;
-      if (!request.userId || typeof email !== 'string' || !email.trim()) {
-        response.status(400).json({ error: 'User ID and email are required' });
+      const principal = request.principal;
+      if (!principal) {
+        response.status(401).json({ error: 'Authenticated principal required' });
         return;
       }
-      const user = await service.syncUser(request.userId, email, typeof name === 'string' ? name : undefined);
+      const user = await service.syncUser(principal.uid, principal.email, principal.name);
       response.json({ user: { id: user.firebaseUid, email: user.email, name: user.name } });
     } catch (error) {
       handleError(error, response, next);

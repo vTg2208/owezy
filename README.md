@@ -38,6 +38,10 @@ Create `backend/.env` from `backend/.env.example`:
 
 ```env
 PORT=3000
+CORS_ALLOWED_ORIGINS=http://localhost:5173
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX=300
+SHUTDOWN_TIMEOUT_MS=10000
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/owezy
 DATABASE_SSL=false
 DATABASE_CONNECTION_TIMEOUT_MS=5000
@@ -47,6 +51,8 @@ RECEIPT_STORAGE_ROOT=./var/receipts
 RECEIPT_MAX_BYTES=5242880
 RECEIPT_PENDING_TTL_HOURS=24
 ```
+
+`CORS_ALLOWED_ORIGINS` is a comma-separated exact allowlist and is mandatory in production. API responses include security headers and request IDs; the default rate limit is 300 requests per 15 minutes per client. `SHUTDOWN_TIMEOUT_MS` bounds graceful HTTP shutdown before lingering connections are forced closed. `/live` reports process liveness, while `/ready` (and the backward-compatible `/health`) verifies PostgreSQL readiness.
 
 `DATABASE_SSL=true` always verifies the PostgreSQL server certificate. Set `DATABASE_SSL_CA` to a PEM trust root when the platform CA is not sufficient; literal `\n` sequences are expanded. Connection and query timeouts are bounded positive millisecond values (defaults: 5,000 and 10,000). `RECEIPT_STORAGE_ROOT` is optional. If it is absent, receipt storage is disabled and upload attempts return a service-unavailable response. Paths are resolved under the configured root and object names are generated deterministically from server-issued receipt IDs. Local receipt publication writes and syncs an exclusive same-directory temporary file before an atomic rename, so migration repair never exposes partial bytes. The default backend upload limit is 5 MiB; the frontend intentionally leaves byte-limit enforcement to the configured backend.
 

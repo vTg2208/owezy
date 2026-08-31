@@ -28,6 +28,10 @@ async function request(router: express.Router, path: string, init?: RequestInit)
 
 function authenticated(request: AuthRequest, _response: Response, next: NextFunction) {
   request.userId = 'firebase-1';
+  request.principal = {
+    uid: 'firebase-1', email: 'trusted@example.com', name: 'Trusted One',
+    emailVerified: true, provider: 'password',
+  };
   next();
 }
 
@@ -39,11 +43,13 @@ afterEach(async () => {
 
 describe('auth routes', () => {
   it('preserves sync and my-trips response contracts', async () => {
+    const syncCalls: unknown[][] = [];
     const service = {
-      async syncUser() {
+      async syncUser(...values: unknown[]) {
+        syncCalls.push(values);
         return {
-          id: '11111111-1111-4111-8111-111111111111', firebaseUid: 'firebase-1', email: 'one@example.com',
-          name: 'One', createdAt: new Date('2026-08-31T00:00:00.000Z'),
+          id: '11111111-1111-4111-8111-111111111111', firebaseUid: 'firebase-1', email: 'trusted@example.com',
+          name: 'Trusted One', createdAt: new Date('2026-08-31T00:00:00.000Z'),
         };
       },
       async findUser() { return null; },
@@ -58,11 +64,12 @@ describe('auth routes', () => {
     const router = createAuthRouter({ service, authenticate: authenticated });
 
     const syncResponse = await request(router, '/sync', {
-      method: 'POST', body: JSON.stringify({ email: 'one@example.com', name: 'One' }),
+      method: 'POST', body: JSON.stringify({ email: 'spoof@example.com', name: 'Spoofed' }),
     });
     expect(await syncResponse.json()).toEqual({
-      user: { id: 'firebase-1', email: 'one@example.com', name: 'One' },
+      user: { id: 'firebase-1', email: 'trusted@example.com', name: 'Trusted One' },
     });
+    expect(syncCalls).toEqual([['firebase-1', 'trusted@example.com', 'Trusted One']]);
 
     const tripsResponse = await request(router, '/my-trips');
     expect(await tripsResponse.json()).toEqual({ trips: [{

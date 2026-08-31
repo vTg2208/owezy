@@ -17,7 +17,88 @@ async function checkHealth(app: ReturnType<typeof createApp>) {
   }
 }
 
+async function requestApp(app: ReturnType<typeof createApp>, path: string, init?: RequestInit) {
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    return await fetch(`http://127.0.0.1:${port}${path}`, init);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
 describe('server lifecycle', () => {
+  it('adds security headers and a request ID', async () => {
+    const response = await requestApp(createApp({
+      database: { check: async () => undefined },
+      requestId: () => 'request-123',
+    }), '/live');
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-request-id')).toBe('request-123');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+  });
+
+  it('separates liveness from database readiness', async () => {
+    let checks = 0;
+    const app = createApp({
+      database: { check: async () => { checks += 1; throw new Error('offline'); } },
+    });
+
+    const live = await requestApp(app, '/live');
+    const ready = await requestApp(app, '/ready');
+
+    expect(live.status).toBe(200);
+    expect(checks).toBe(1);
+    expect(ready.status).toBe(503);
+  });
+
+  it('allows configured CORS origins and rejects other browser origins', async () => {
+    const app = createApp({
+      database: { check: async () => undefined },
+      allowedOrigins: ['https://owezy.app'],
+    });
+
+    const allowed = await requestApp(app, '/live', { headers: { Origin: 'https://owezy.app' } });
+    const rejected = await requestApp(app, '/live', { headers: { Origin: 'https://evil.example' } });
+
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://owezy.app');
+    expect(rejected.status).toBe(403);
+  });
+
+  it('rate limits repeated requests', async () => {
+    const app = createApp({
+      database: { check: async () => undefined },
+      rateLimit: { windowMs: 60_000, max: 1 },
+    });
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      expect((await fetch(`http://127.0.0.1:${port}/live`)).status).toBe(200);
+      const limited = await fetch(`http://127.0.0.1:${port}/live`);
+      expect(limited.status).toBe(429);
+      expect(await limited.json()).toMatchObject({ error: 'Too many requests' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('forces stalled connections closed at the shutdown deadline', async () => {
+    const events: string[] = [];
+    const shutdown = createGracefulShutdown({
+      close: () => { events.push('close'); },
+      closeAllConnections: () => { events.push('force'); },
+    }, async () => { events.push('database'); }, 5);
+
+    await shutdown();
+
+    expect(events).toEqual(['close', 'force', 'database']);
+  });
+
   it('returns a controlled 400 for a JSON primitive body', async () => {
     const app = createApp({ database: { check: async () => undefined } });
     const server = app.listen(0);
