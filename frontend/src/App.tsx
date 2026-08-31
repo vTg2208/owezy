@@ -6,7 +6,6 @@ import TripDashboard from './pages/TripDashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
-import backgroundImage from './assets/images/backgrounds/background.jpg';
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -14,12 +13,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <main className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <p role="status" className="text-muted">Opening your travel notebook…</p>
         </div>
-      </div>
+      </main>
     );
   }
   
@@ -41,18 +39,8 @@ function TripRoute() {
 
 function AppContent() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 relative">
-      {/* Background Image with Opacity */}
-      <div 
-        className="fixed inset-0 bg-cover bg-center bg-no-repeat opacity-20 pointer-events-none"
-        style={{ 
-          backgroundImage: `url(${backgroundImage})`,
-          zIndex: 0
-        }}
-      />
-      
-      {/* Content */}
-      <div className="relative z-10">
+    <div className="app-shell">
+      <div>
         <Routes>
           <Route path="/" element={<Welcome />} />
           <Route path="/login" element={<Login />} />

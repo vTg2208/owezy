@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import TripDashboard from './TripDashboard';
@@ -26,11 +27,17 @@ vi.mock('../api', () => ({
 
 describe('TripDashboard direct navigation', () => {
   it('uses server-derived membership and exposes accessible trip tabs', async () => {
+    const user = userEvent.setup();
     render(<MemoryRouter><TripDashboard tripId="trip-1" /></MemoryRouter>);
 
     expect(await screen.findByRole('heading', { name: 'Goa' })).toBeVisible();
     expect(screen.getByLabelText('Amount (₹)')).toBeVisible();
     expect(screen.getByRole('tab', { name: 'Expenses' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getAllByText('One')).toHaveLength(2);
+
+    await user.click(screen.getByRole('tab', { name: 'Expenses' }));
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'Balances' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Balances' })).toHaveAttribute('aria-selected', 'true');
   });
 });

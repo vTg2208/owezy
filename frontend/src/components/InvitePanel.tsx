@@ -3,39 +3,58 @@ import { api } from '../api';
 
 export default function InvitePanel({ tripId }: { tripId: string }) {
   const [email, setEmail] = useState('');
-  const [token, setToken] = useState('');
+  const [invite, setInvite] = useState<{ id: string; token: string }>();
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError('');
+    setBusy(true); setError(''); setMessage('');
     try {
-      const invite = await api.createInvite(tripId, email);
-      setToken(invite.token);
+      const result = await api.createInvite(tripId, email.trim());
+      setInvite({ id: result.inviteId, token: result.token });
       setEmail('');
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Failed to create invitation');
-    } finally {
-      setBusy(false);
-    }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Invitation creation failed.'); }
+    finally { setBusy(false); }
+  };
+
+  const copy = async () => {
+    if (!invite) return;
+    try {
+      const url = `${window.location.origin}/home?invite=${encodeURIComponent(invite.token)}`;
+      await navigator.clipboard.writeText(url);
+      setMessage('Private invitation link copied.');
+    } catch { setError('Copy failed. Select and copy the token manually.'); }
+  };
+
+  const revoke = async () => {
+    if (!invite) return;
+    setBusy(true); setError('');
+    try { await api.revokeInvite(tripId, invite.id); setInvite(undefined); setMessage('Invitation revoked.'); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : 'Invitation revocation failed.'); }
+    finally { setBusy(false); }
   };
 
   return (
-    <section aria-labelledby="invite-heading" className="border-t pt-4 mt-4">
-      <h3 id="invite-heading" className="font-semibold mb-2">Invite a traveller</h3>
-      {error && <p role="alert" className="text-red-700 mb-2">{error}</p>}
-      <form onSubmit={create} className="flex flex-wrap gap-2">
-        <label htmlFor="invite-email" className="sr-only">Email address</label>
-        <input id="invite-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="friend@example.com" className="flex-1 min-w-56 px-3 py-2 border rounded-lg" />
-        <button type="submit" disabled={busy} className="px-4 py-2 bg-indigo-700 text-white rounded-lg disabled:opacity-50">{busy ? 'Creating…' : 'Create invite'}</button>
+    <section aria-labelledby="invite-heading" className="flat-section mt-4">
+      <h3 id="invite-heading">Invite a traveller</h3>
+      <p className="mb-3 text-sm text-muted">The link works only for the email address you enter.</p>
+      {error && <p role="alert" className="notice notice-error mb-3">{error}</p>}
+      {message && <p role="status" className="notice notice-success mb-3">{message}</p>}
+      <form onSubmit={create} className="flex flex-col gap-2 sm:flex-row">
+        <label htmlFor="invite-email" className="sr-only">Traveller email address</label>
+        <input id="invite-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="friend@example.com" className="flex-1" />
+        <button type="submit" disabled={busy} className="button button-primary">{busy ? 'Creating…' : 'Create private link'}</button>
       </form>
-      {token && (
-        <div role="status" className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
-          <p className="text-sm font-semibold">Copy this token now. It is shown only once.</p>
-          <code className="block break-all mt-1 select-all">{token}</code>
-          <button type="button" onClick={() => void navigator.clipboard.writeText(token)} className="mt-2 text-indigo-700 underline">Copy token</button>
+      {invite && (
+        <div className="notice mt-3">
+          <p className="font-semibold">Copy this now. It is shown only once.</p>
+          <code className="my-2 block break-all rounded bg-white p-2 text-sm select-all">{invite.token}</code>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => void copy()} className="button button-secondary">Copy invitation link</button>
+            <button type="button" onClick={() => void revoke()} disabled={busy} className="button button-quiet text-red-800">Revoke</button>
+          </div>
         </div>
       )}
     </section>

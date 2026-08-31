@@ -1,115 +1,87 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import { authAPI } from '../api';
-import { Trip } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import type { Trip } from '../types';
 
 export default function Dashboard() {
   const { user, logout, deleteAccount } = useAuth();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
-  const handleDeleteAccount = async () => {
-    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      try {
-        await deleteAccount();
-      } catch (error) {
-        console.error('Failed to delete account:', error);
-        alert('Failed to delete account. Please try again.');
-      }
-    }
-  };
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const loadTrips = async () => {
-      if (!user) return;
-      
-      try {
-        const myTrips = await authAPI.getMyTrips();
-        setTrips(myTrips);
-      } catch (error) {
-        console.error('Failed to load trips:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadTrips();
+    const controller = new AbortController();
+    if (!user) return () => controller.abort();
+    authAPI.getMyTrips().then(setTrips).catch((failure: unknown) => {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Trips could not be loaded.');
+    }).finally(() => { if (!controller.signal.aborted) setIsLoading(false); });
+    return () => controller.abort();
   }, [user]);
 
+  const handleDeleteAccount = async () => {
+    setError('');
+    try { await deleteAccount(); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : 'Account deletion failed.'); }
+  };
+
   return (
-    <div className="min-h-screen p-4 sm:p-6 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Welcome, {user?.name}!</h1>
+    <main className="page-wrap">
+      <header className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <Link to="/" className="brand-word text-5xl no-underline">Owezy</Link>
+          <p className="eyebrow mt-3">Your travel shelf</p>
+          <h1 className="mt-1 text-4xl">Hello, {user?.name}</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => void logout()} className="button button-secondary">Log out</button>
+          <button type="button" onClick={() => setConfirmDelete(true)} className="button button-quiet text-red-800">Delete account</button>
+        </div>
+      </header>
+
+      {error && <p role="alert" className="notice notice-error mb-5">{error}</p>}
+      {confirmDelete && (
+        <section className="notice notice-error mb-5" aria-labelledby="delete-account-title">
+          <h2 id="delete-account-title" className="text-lg">Permanently delete your account?</h2>
+          <p className="mt-1">This cannot be undone. Shared financial history remains for other trip members.</p>
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={() => void handleDeleteAccount()} className="button button-danger">Delete permanently</button>
+            <button type="button" onClick={() => setConfirmDelete(false)} className="button button-quiet">Keep account</button>
           </div>
-          <div className="flex gap-2 w-full sm:w-auto">
-            <button
-              onClick={handleDeleteAccount}
-              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm sm:text-base flex-1 sm:flex-none"
-            >
-              Delete Account
-            </button>
-            <button
-              onClick={logout}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm sm:text-base flex-1 sm:flex-none"
-            >
-              Logout
-            </button>
-          </div>
+        </section>
+      )}
+
+      <section className="paper-card" aria-labelledby="my-trips-title">
+        <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div><p className="eyebrow">Saved journeys</p><h2 id="my-trips-title">My trips</h2></div>
+          <Link to="/home?mode=create" className="button button-primary">Create trip</Link>
         </div>
 
-        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-gray-800">My Trips</h2>
-            <Link
-              to="/home"
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Create New Trip
-            </Link>
+        {isLoading ? <p role="status" className="text-muted py-8 text-center">Loading trips…</p> : trips.length === 0 ? (
+          <div className="py-10 text-center">
+            <p className="text-muted mb-4">Your first trip page is ready when you are.</p>
+            <Link to="/home?mode=create" className="button button-secondary">Create your first trip</Link>
           </div>
+        ) : (
+          <ul className="grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3">
+            {trips.map((trip) => (
+              <li key={trip.id} className="rounded-xl border border-gray-300 bg-white p-5">
+                <p className="eyebrow">{trip.currency ?? 'INR'} trip</p>
+                <h3 className="mt-1 text-xl">{trip.name}</h3>
+                <p className="mt-3 text-sm text-muted">Room <span className="font-mono font-bold text-gray-900">{trip.room_code}</span></p>
+                <p className="text-xs text-muted">Created {new Date(trip.created_at).toLocaleDateString()}</p>
+                <Link to={`/trip/${trip.id}`} className="button button-secondary mt-5 w-full">Open trip</Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-          {isLoading ? (
-            <p className="text-gray-500 text-center py-8">Loading trips...</p>
-          ) : trips.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500 mb-4">You haven't created any trips yet</p>
-              <Link
-                to="/home"
-                className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                Create Your First Trip
-              </Link>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {trips.map((trip) => (
-                <div key={trip.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 hover:shadow-md transition-shadow">
-                  <h3 className="font-semibold text-lg mb-2">{trip.name}</h3>
-                  <p className="text-sm text-gray-600 mb-2">Room Code: <span className="font-mono font-bold">{trip.room_code}</span></p>
-                  <p className="text-xs text-gray-500 mb-3">Created {new Date(trip.created_at).toLocaleDateString()}</p>
-                  <Link
-                    to={`/trip/${trip.id}`}
-                    className="block text-center px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
-                  >
-                    Open Trip
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="font-semibold text-blue-900 mb-2">Quick Actions</h3>
-          <div className="space-y-2 text-sm">
-            <Link to="/home?mode=create" className="block text-blue-700 hover:underline">→ Create a new trip</Link>
-            <Link to="/home?mode=join" className="block text-blue-700 hover:underline">→ Join an existing trip</Link>
-          </div>
-        </div>
-      </div>
-    </div>
+      <nav aria-label="Trip shortcuts" className="mt-5 flex flex-wrap gap-3">
+        <Link to="/home?mode=join" className="button button-quiet">Join with room code →</Link>
+        <Link to="/home" className="button button-quiet">Accept invitation →</Link>
+      </nav>
+    </main>
   );
 }

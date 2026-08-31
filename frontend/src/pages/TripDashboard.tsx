@@ -10,13 +10,15 @@ import ExpenseList from '../components/ExpenseList';
 import InvitePanel from '../components/InvitePanel';
 import ParticipantList from '../components/ParticipantList';
 import SettlementPlan from '../components/SettlementPlan';
+import AuditTrail from '../components/AuditTrail';
 
-type Tab = 'expenses' | 'balances' | 'settlement' | 'chat';
+type Tab = 'expenses' | 'balances' | 'settlement' | 'chat' | 'activity';
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'expenses', label: 'Expenses' },
   { id: 'balances', label: 'Balances' },
   { id: 'settlement', label: 'Settlement' },
   { id: 'chat', label: 'Chat' },
+  { id: 'activity', label: 'Activity' },
 ];
 
 export default function TripDashboard({ tripId }: { tripId: string }) {
@@ -114,6 +116,9 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
             </div>
             <div id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" hidden={activeTab !== 'chat'}>
               {activeTab === 'chat' && <Chat tripId={tripId} currentUserId={currentMemberId} />}
+            </div>
+            <div id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden={activeTab !== 'activity'}>
+              {activeTab === 'activity' && <AuditTrail tripId={tripId} />}
             </div>
           </div>
         </section>
