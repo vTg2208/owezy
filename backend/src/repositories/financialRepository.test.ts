@@ -43,7 +43,7 @@ class InviteAcceptanceBoundary {
   async query(text: string, values: unknown[] = []) {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.includes('FROM trip_invites i') && sql.includes('JOIN trips')) {
-      return { rows: [{ id: 'invite-1', trip_id: 'trip-1', email: 'guest@example.com', status: 'pending', expires_at: new Date('2026-09-01T00:00:00.000Z'), is_locked: this.locked }], rowCount: 1 };
+      return { rows: [{ id: 'invite-1', trip_id: 'trip-1', email: 'guest@example.com', status: 'pending', expires_at: new Date('2099-09-01T00:00:00.000Z'), is_locked: this.locked }], rowCount: 1 };
     }
     if (sql.startsWith('SELECT id FROM users')) {
       return { rows: [{ id: 'user-1' }], rowCount: 1 };
