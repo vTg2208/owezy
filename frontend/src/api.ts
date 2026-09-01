@@ -109,7 +109,7 @@ export function createIdempotencyKey(): string {
 
 export const authAPI = {
   syncUser: async (_email?: string, _name?: string) => request<{ user: unknown }>('/auth/sync', {
-    method: 'POST', json: {},
+    method: 'POST', json: {}, timeoutMs: 60_000,
   }),
   getMyTrips: async () => (await request<{ trips: Trip[] }>('/auth/my-trips')).trips ?? [],
   deleteAccount: async () => request<{ success: true }>('/auth/me', { method: 'DELETE' }),

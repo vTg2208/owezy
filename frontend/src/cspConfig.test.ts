@@ -27,4 +27,15 @@ describe('production Content Security Policy', () => {
       'https://apis.google.com',
     ]);
   });
+
+  it('does not let SPA documents retain an obsolete authentication policy', () => {
+    const documentHeaders = vercelConfig.headers
+      .filter(({ source }) => source !== '/assets/(.*)')
+      .flatMap(({ headers }) => headers);
+
+    expect(documentHeaders).toContainEqual({
+      key: 'Cache-Control',
+      value: 'no-store',
+    });
+  });
 });

@@ -5,6 +5,7 @@ vi.mock('./firebase', () => ({
 }));
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.resetModules();
 });
@@ -25,5 +26,26 @@ describe('security-sensitive API requests', () => {
       Authorization: 'Bearer firebase-token',
       'Idempotency-Key': expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
+  });
+
+  it('keeps authentication sync alive through a Render cold start', async () => {
+    let observedSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (_url, init) => {
+      observedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    }));
+    const { authAPI } = await import('./api');
+    vi.useFakeTimers();
+
+    const syncResult = authAPI.syncUser().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(15_001);
+
+    expect(observedSignal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(44_999);
+    await expect(syncResult).resolves.toMatchObject({ name: 'TimeoutError' });
+    expect(observedSignal?.aborted).toBe(true);
   });
 });
