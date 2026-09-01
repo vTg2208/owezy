@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { safeReturnTo } from '../utils/navigation';
+import { LoadingLabel } from '../components/LoadingIndicator';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -55,7 +56,7 @@ export default function Login() {
           <input id="email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
           <label htmlFor="password">Password</label>
           <input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" required />
-          <button type="submit" disabled={isLoading} className="button button-primary mt-2">{isLoading ? 'Logging in…' : 'Log in'}</button>
+          <button type="submit" disabled={isLoading} className="button button-primary mt-2">{isLoading ? <LoadingLabel label="Logging in…" /> : 'Log in'}</button>
         </form>
 
         <div className="auth-divider my-6">or</div>

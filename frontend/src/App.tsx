@@ -6,6 +6,7 @@ import TripDashboard from './pages/TripDashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import LoadingIndicator from './components/LoadingIndicator';
 
 // Protected route wrapper
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -14,10 +15,8 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   
   if (isLoading) {
     return (
-      <main className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p role="status" className="text-muted">Opening your travel notebook…</p>
-        </div>
+      <main className="loading-screen">
+        <LoadingIndicator label="Opening your travel notebook…" />
       </main>
     );
   }

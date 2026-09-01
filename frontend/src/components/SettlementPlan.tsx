@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import type { Payment, Settlement } from '../types';
+import { LoadingLabel } from './LoadingIndicator';
 
 interface SettlementPlanProps {
   tripId: string;
@@ -33,10 +34,10 @@ export default function SettlementPlan({
       {error && <p role="alert" className="text-red-700">{error}</p>}
       <section aria-labelledby="suggested-settlements">
         <h2 id="suggested-settlements" className="mb-3 text-2xl">Suggested settlements</h2>
-        {relevant.length === 0 ? <p className="text-green-700">You’re all settled.</p> : (
-          <div className="border-t border-gray-300">
+        {relevant.length === 0 ? <p className="notice notice-success">You’re all settled.</p> : (
+          <div className="ledger-list">
             {relevant.map((item) => (
-              <article key={`${item.from}-${item.to}`} className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-300 py-4">
+              <article key={`${item.from}-${item.to}`} className="ledger-row">
                 <p><strong>{item.from === currentUserId ? 'You' : item.fromName}</strong> pay <strong>{item.to === currentUserId ? 'you' : item.toName}</strong></p>
                 <p className="text-xl font-bold">₹{item.amount.toFixed(2)}</p>
                 {item.from === currentUserId && (
@@ -47,7 +48,7 @@ export default function SettlementPlan({
                       tripId, item.to, item.amount.toFixed(2), 'Settlement',
                     ))}
                     className="button button-primary"
-                  >{busy === `create-${item.to}` ? 'Recording…' : 'Record payment'}</button>
+                  >{busy === `create-${item.to}` ? <LoadingLabel label="Recording…" /> : 'Record payment'}</button>
                 )}
               </article>
             ))}
@@ -56,10 +57,10 @@ export default function SettlementPlan({
       </section>
       <section aria-labelledby="payment-history">
         <h2 id="payment-history" className="mb-3 text-2xl">Payment requests</h2>
-        {myPayments.length === 0 ? <p className="text-gray-600">No payments recorded yet.</p> : (
-          <div className="border-t border-gray-300">
+        {myPayments.length === 0 ? <p className="text-muted">No payments recorded yet.</p> : (
+          <div className="ledger-list">
             {myPayments.map((payment) => (
-              <article key={payment.id} className="flex flex-wrap justify-between gap-3 border-b border-gray-300 py-4">
+              <article key={payment.id} className="ledger-row">
                 <div>
                   <p className="font-semibold">₹{payment.amount ?? '—'} {payment.currency ?? 'INR'}</p>
                   <p className="text-sm capitalize">{payment.status}</p>
@@ -67,11 +68,11 @@ export default function SettlementPlan({
                 {payment.status === 'pending' && (
                   <div className="flex gap-2">
                     {payment.payee_membership_id === currentUserId && (<>
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'confirm'))} className="px-3 py-2 bg-green-700 text-white rounded-lg disabled:opacity-50">{busy === payment.id ? 'Updating…' : 'Confirm'}</button>
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'reject'))} className="px-3 py-2 border rounded-lg disabled:opacity-50">Reject</button>
+                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'confirm'))} className="button button-primary">{busy === payment.id ? <LoadingLabel label="Updating…" /> : 'Confirm'}</button>
+                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'reject'))} className="button button-secondary">Reject</button>
                     </>)}
                     {payment.payer_membership_id === currentUserId && (
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'cancel'))} className="px-3 py-2 border rounded-lg disabled:opacity-50">{busy === payment.id ? 'Updating…' : 'Cancel'}</button>
+                      <button type="button" disabled={Boolean(busy)} onClick={() => void mutate(payment.id, () => api.transitionPayment(tripId, payment.id, 'cancel'))} className="button button-secondary">{busy === payment.id ? <LoadingLabel label="Updating…" /> : 'Cancel'}</button>
                     )}
                   </div>
                 )}

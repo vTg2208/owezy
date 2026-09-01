@@ -11,6 +11,7 @@ import InvitePanel from '../components/InvitePanel';
 import ParticipantList from '../components/ParticipantList';
 import SettlementPlan from '../components/SettlementPlan';
 import AuditTrail from '../components/AuditTrail';
+import LoadingIndicator, { LoadingLabel } from '../components/LoadingIndicator';
 
 type Tab = 'expenses' | 'balances' | 'settlement' | 'chat' | 'activity';
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -49,7 +50,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
     finally { setBusyAction(''); }
   };
 
-  if (loading && !snapshot) return <main className="min-h-screen grid place-items-center"><p role="status">Loading trip…</p></main>;
+  if (loading && !snapshot) return <main className="loading-screen"><LoadingIndicator label="Loading trip…" /></main>;
   if (!snapshot) return <main className="min-h-screen grid place-items-center"><p role="alert">{error ?? 'Trip not found'}</p></main>;
 
   const { trip, participants, expenses, balances, settlements } = snapshot;
@@ -74,7 +75,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
           <span className="brand-word text-4xl">Owezy</span>
         </nav>
 
-        <div className="mt-6 overflow-hidden border border-gray-300 bg-white shadow-sm">
+        <div className="trip-shell">
         <header className="trip-banner">
           <div className="trip-banner-copy">
             <p className="eyebrow">Trip notebook</p>
@@ -86,7 +87,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
               <span className="status-chip">{trip.is_locked ? 'Room closed' : 'Room open'}</span>
             </div>
             <div className="trip-actions">
-              {isOwner && <button type="button" disabled={Boolean(busyAction)} onClick={() => void mutation('room', () => trip.is_locked ? api.unlockRoom(tripId) : api.lockRoom(tripId))} className="button button-secondary">{busyAction === 'room' ? (trip.is_locked ? 'Opening room…' : 'Closing room…') : (trip.is_locked ? 'Open room' : 'Close room')}</button>}
+              {isOwner && <button type="button" disabled={Boolean(busyAction)} onClick={() => void mutation('room', () => trip.is_locked ? api.unlockRoom(tripId) : api.lockRoom(tripId))} className="button button-secondary">{busyAction === 'room' ? <LoadingLabel label={trip.is_locked ? 'Opening room…' : 'Closing room…'} /> : (trip.is_locked ? 'Open room' : 'Close room')}</button>}
               <button type="button" onClick={() => setConfirmLeave(true)} className="button button-quiet text-red-800">Leave trip</button>
             </div>
           <p role="status" className="mt-3 max-w-xl text-sm text-muted">
@@ -97,7 +98,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
           {confirmLeave && (
             <div className="notice notice-error mt-3 text-left">
               <p>Leave this trip? Your historical entries will remain.</p>
-              <div className="mt-2 flex gap-2"><button type="button" disabled={busyAction === 'leave'} onClick={() => void mutation('leave', async () => { await api.removeParticipant(tripId, currentMemberId); navigate('/dashboard'); })} className="button button-danger">{busyAction === 'leave' ? 'Leaving…' : 'Confirm leave'}</button><button type="button" onClick={() => setConfirmLeave(false)} className="button button-quiet">Stay</button></div>
+              <div className="mt-2 flex gap-2"><button type="button" disabled={busyAction === 'leave'} onClick={() => void mutation('leave', async () => { await api.removeParticipant(tripId, currentMemberId); navigate('/dashboard'); })} className="button button-danger">{busyAction === 'leave' ? <LoadingLabel label="Leaving…" /> : 'Confirm leave'}</button><button type="button" onClick={() => setConfirmLeave(false)} className="button button-quiet">Stay</button></div>
             </div>
           )}
           </div>

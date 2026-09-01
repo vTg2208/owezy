@@ -8,6 +8,7 @@ import {
   type SplitEntry,
   type SplitMode,
 } from '../utils/splitBuilder';
+import { LoadingLabel } from './LoadingIndicator';
 
 interface AddExpenseProps {
   tripId: string;
@@ -102,7 +103,7 @@ export default function AddExpense({
           <legend className="field-label mb-2">Split between</legend>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {participants.map((participant) => (
-              <label key={participant.id} className="flex min-w-0 items-center gap-2 border border-gray-300 bg-white px-3 py-2">
+              <label key={participant.id} className="split-member">
                 <input
                   type="checkbox"
                   checked={selected.includes(participant.id)}
@@ -117,7 +118,7 @@ export default function AddExpense({
         </fieldset>
         {splitType !== 'equal' && (
           <fieldset className="space-y-2">
-            <legend className="text-sm font-medium text-gray-700">{splitType === 'custom' ? 'Custom amounts (₹)' : 'Percentages (%)'}</legend>
+            <legend className="field-label">{splitType === 'custom' ? 'Custom amounts (₹)' : 'Percentages (%)'}</legend>
             {selected.map((participantId) => {
               const participant = participants.find((item) => item.id === participantId);
               const entry = entries.find((item) => item.participantId === participantId);
@@ -132,14 +133,14 @@ export default function AddExpense({
         )}
         {receiptUploadsEnabled ? (
           <div>
-            <label htmlFor="receipt-file" className="block text-sm font-medium text-gray-700 mb-2">Receipt image (optional)</label>
+            <label htmlFor="receipt-file" className="field-label mb-2 block">Receipt image (optional)</label>
             <input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)} className="w-full px-4 py-3 border rounded-lg" />
           </div>
         ) : (
-          <p role="status" className="border-l-2 border-gray-300 pl-3 text-sm text-muted">Receipt uploads are unavailable here. Expense splitting still works normally.</p>
+          <p role="status" className="subtle-note">Receipt uploads are unavailable here. Expense splitting still works normally.</p>
         )}
         <button type="submit" disabled={loading || selected.length === 0} className="button button-primary w-full">
-          {loading ? 'Adding…' : 'Add expense'}
+          {loading ? <LoadingLabel label="Adding…" /> : 'Add expense'}
         </button>
       </form>
     </section>

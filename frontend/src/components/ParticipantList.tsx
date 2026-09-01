@@ -23,7 +23,7 @@ export default function ParticipantList({ participants, isAdmin, currentUserId, 
               <button
                 type="button"
                 onClick={() => onRemove(participant.id)}
-                className="-mr-2 grid min-h-8 min-w-8 place-items-center border-0 bg-transparent font-bold text-red-700 hover:text-red-900"
+                className="member-remove"
                 aria-label={`Remove ${participant.name}`}
               >
                 ×

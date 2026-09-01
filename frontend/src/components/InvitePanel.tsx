@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { LoadingLabel } from './LoadingIndicator';
 
 export default function InvitePanel({ tripId }: { tripId: string }) {
   const [email, setEmail] = useState('');
@@ -39,7 +40,7 @@ export default function InvitePanel({ tripId }: { tripId: string }) {
   return (
     <details className="group">
       <summary className="button button-secondary w-fit list-none">Invite people</summary>
-      <section aria-labelledby="invite-heading" className="mt-4 border-l-2 border-gray-300 pl-4">
+      <section aria-labelledby="invite-heading" className="invite-panel">
       <h3 id="invite-heading" className="text-base">Invite a traveller</h3>
       <p className="mb-3 text-sm text-muted">Create a private link for one email address.</p>
       {error && <p role="alert" className="notice notice-error mb-3">{error}</p>}
@@ -47,12 +48,12 @@ export default function InvitePanel({ tripId }: { tripId: string }) {
       <form onSubmit={create} className="flex flex-col gap-2">
         <label htmlFor="invite-email" className="sr-only">Traveller email address</label>
         <input id="invite-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="friend@example.com" className="flex-1" />
-        <button type="submit" disabled={busy} className="button button-primary">{busy ? 'Creating…' : 'Create private link'}</button>
+        <button type="submit" disabled={busy} className="button button-primary">{busy ? <LoadingLabel label="Creating…" /> : 'Create private link'}</button>
       </form>
       {invite && (
         <div className="notice mt-3">
           <p className="font-semibold">Copy this now. It is shown only once.</p>
-          <code className="my-2 block break-all rounded bg-white p-2 text-sm select-all">{invite.token}</code>
+          <code className="invite-token">{invite.token}</code>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void copy()} className="button button-secondary">Copy invitation link</button>
             <button type="button" onClick={() => void revoke()} disabled={busy} className="button button-quiet text-red-800">Revoke</button>

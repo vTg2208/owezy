@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { safeReturnTo } from '../utils/navigation';
+import { LoadingLabel } from '../components/LoadingIndicator';
 
 export default function Register() {
   const [email, setEmail] = useState('');
@@ -63,7 +64,7 @@ export default function Register() {
           <label htmlFor="password">Password</label>
           <input id="password" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="password-help" minLength={6} required />
           <p id="password-help" className="help-text">Use at least 6 characters. A longer unique password is safer.</p>
-          <button type="submit" disabled={isLoading} className="button button-primary mt-2">{isLoading ? 'Creating account…' : 'Create account'}</button>
+          <button type="submit" disabled={isLoading} className="button button-primary mt-2">{isLoading ? <LoadingLabel label="Creating account…" /> : 'Create account'}</button>
         </form>
         <div className="auth-divider my-6">or</div>
         <button type="button" onClick={() => void handleGoogle()} disabled={isLoading} className="button button-secondary w-full">Continue with Google</button>

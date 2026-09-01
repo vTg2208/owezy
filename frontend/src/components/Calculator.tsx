@@ -86,9 +86,9 @@ export default function Calculator({ onUseValue }: CalculatorProps) {
   ];
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-      <div className="bg-white rounded px-3 py-2 mb-3 text-right border border-gray-300">
-        <div className="text-2xl font-mono font-semibold text-gray-800 truncate">
+    <div className="calculator-shell">
+      <div className="calculator-display">
+        <div className="truncate font-mono text-2xl font-semibold">
           {display}
         </div>
       </div>
@@ -112,12 +112,12 @@ export default function Calculator({ onUseValue }: CalculatorProps) {
                   handleNumber(btn);
                 }
               }}
-              className={`py-3 rounded font-semibold transition ${
+              className={`calculator-key ${
                 isEquals
-                  ? 'bg-green-500 text-white hover:bg-green-600'
+                  ? 'calculator-key-equals'
                   : isOperation
-                  ? 'bg-indigo-500 text-white hover:bg-indigo-600'
-                  : 'bg-white border border-gray-300 text-gray-800 hover:bg-gray-100'
+                  ? 'calculator-key-operation'
+                  : ''
               }`}
             >
               {btn}
@@ -129,14 +129,14 @@ export default function Calculator({ onUseValue }: CalculatorProps) {
       <div className="grid grid-cols-2 gap-2">
         <button
           onClick={clear}
-          className="py-2 bg-red-500 text-white rounded font-semibold hover:bg-red-600 transition"
+          className="button button-danger"
         >
           Clear
         </button>
         {onUseValue && (
           <button
             onClick={handleUseValue}
-            className="py-2 bg-blue-500 text-white rounded font-semibold hover:bg-blue-600 transition"
+            className="button button-primary"
           >
             Use Value
           </button>

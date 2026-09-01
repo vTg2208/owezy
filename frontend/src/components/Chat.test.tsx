@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { api } from '../api';
 import Chat from './Chat';
 
 vi.mock('../api', () => ({
@@ -13,6 +14,15 @@ vi.mock('../api', () => ({
 }));
 
 describe('Chat chronology', () => {
+  it('shows an announced wait while the first message page is loading', () => {
+    vi.mocked(api.getMessages).mockReturnValueOnce(new Promise(() => undefined));
+
+    render(<Chat tripId="trip-1" currentUserId="a" />);
+
+    expect(screen.getByRole('status', { name: 'Loading messages…' })).toBeInTheDocument();
+    expect(screen.queryByText('No messages yet. Start the conversation.')).not.toBeInTheDocument();
+  });
+
   it('renders a newest-first API page in chronological reading order', async () => {
     render(<Chat tripId="trip-1" currentUserId="a" />);
     const older = await screen.findByText('Older');

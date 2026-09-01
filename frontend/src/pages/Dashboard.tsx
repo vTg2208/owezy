@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { authAPI } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import type { Trip } from '../types';
+import LoadingIndicator from '../components/LoadingIndicator';
 
 export default function Dashboard() {
   const { user, logout, deleteAccount } = useAuth();
@@ -60,8 +61,8 @@ export default function Dashboard() {
       <section aria-labelledby="my-trips-title">
         <div className="mb-5"><h2 id="my-trips-title">My trips</h2></div>
 
-        {isLoading ? <p role="status" className="text-muted py-8 text-center">Loading trips…</p> : trips.length === 0 ? (
-          <div className="py-10 text-center">
+        {isLoading ? <LoadingIndicator label="Loading trips…" className="my-8" /> : trips.length === 0 ? (
+          <div className="empty-state">
             <p className="text-muted mb-4">Your first trip page is ready when you are.</p>
             <Link to="/home?mode=create" className="button button-secondary">Create your first trip</Link>
           </div>
@@ -74,7 +75,7 @@ export default function Dashboard() {
                   <h3 className="mt-1 text-xl">{trip.name}</h3>
                 </div>
                 <div className="text-sm text-muted">
-                  <p>Room <span className="font-mono font-bold text-gray-900">{trip.room_code}</span></p>
+                  <p>Room <span className="font-mono font-bold">{trip.room_code}</span></p>
                   <p className="text-xs">Created {new Date(trip.created_at).toLocaleDateString()}</p>
                 </div>
                 <Link to={`/trip/${trip.id}`} className="button button-secondary">Open trip</Link>

@@ -7,7 +7,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
-    pool: 'threads',
+    pool: 'forks',
+    maxWorkers: 1,
   },
   server: {
     port: 5173,

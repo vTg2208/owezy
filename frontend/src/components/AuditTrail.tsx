@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { AuditEvent } from '../types';
+import LoadingIndicator from './LoadingIndicator';
 
 function readableAction(action: string) {
   return action.replace(/_/g, ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase());
@@ -19,14 +20,14 @@ export default function AuditTrail({ tripId }: { tripId: string }) {
     return () => { active = false; };
   }, [tripId]);
 
-  if (loading) return <p role="status" className="text-muted">Loading activity…</p>;
+  if (loading) return <LoadingIndicator label="Loading activity…" className="my-8" />;
   if (error) return <p role="alert" className="notice notice-error">{error}</p>;
   if (events.length === 0) return <p className="text-muted">No recorded activity yet.</p>;
 
   return (
     <ol className="mx-auto grid max-w-3xl list-none p-0">
       {events.map((event) => (
-        <li key={event.id} className="border-b border-gray-300 pb-3">
+        <li key={event.id} className="ledger-row">
           <div className="flex flex-wrap justify-between gap-2">
             <strong>{readableAction(event.action)}</strong>
             <time dateTime={event.created_at} className="text-sm text-muted">{new Date(event.created_at).toLocaleString()}</time>

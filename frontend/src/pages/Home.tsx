@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
+import { LoadingLabel } from '../components/LoadingIndicator';
 
 type Mode = 'choose' | 'create' | 'join' | 'accept';
 
@@ -77,7 +78,7 @@ export default function Home() {
           <Link to="/dashboard" className="back-link" aria-label="Back to dashboard">← Dashboard</Link>
           <Link to="/" className="brand-word text-4xl no-underline">Owezy</Link>
         </nav>
-      <section className="mx-auto mt-10 w-full max-w-xl border-t border-gray-300 pt-8" aria-labelledby="trip-action-title">
+      <section className="action-card" aria-labelledby="trip-action-title">
         <header className="mb-8">
           <p className="eyebrow">Start a page</p>
           <h1 id="trip-action-title">Plan the next trip</h1>
@@ -98,7 +99,7 @@ export default function Home() {
           <form onSubmit={handleCreateTrip} className="form-stack">
             <label htmlFor="trip-name">Trip name</label>
             <input id="trip-name" value={tripName} onChange={(event) => setTripName(event.target.value)} maxLength={100} placeholder="Monsoon in Goa" autoComplete="off" required />
-            <button type="submit" disabled={loading || !tripName.trim()} className="button button-primary">{loading ? 'Creating…' : 'Create trip'}</button>
+            <button type="submit" disabled={loading || !tripName.trim()} className="button button-primary">{loading ? <LoadingLabel label="Creating…" /> : 'Create trip'}</button>
             <button type="button" onClick={() => setMode('choose')} className="button button-quiet">Back</button>
           </form>
         )}
@@ -107,7 +108,7 @@ export default function Home() {
           <form onSubmit={handleJoinTrip} className="form-stack">
             <label htmlFor="room-code">Room code</label>
             <input id="room-code" value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} maxLength={6} placeholder="ABC123" autoCapitalize="characters" autoComplete="off" required className="code-input" />
-            <button type="submit" disabled={loading || roomCode.trim().length !== 6} className="button button-primary">{loading ? 'Joining…' : 'Join trip'}</button>
+            <button type="submit" disabled={loading || roomCode.trim().length !== 6} className="button button-primary">{loading ? <LoadingLabel label="Joining…" /> : 'Join trip'}</button>
             <button type="button" onClick={() => setMode('choose')} className="button button-quiet">Back</button>
           </form>
         )}
@@ -117,7 +118,7 @@ export default function Home() {
             <label htmlFor="invite-token">Invitation token</label>
             <input id="invite-token" value={inviteToken} onChange={(event) => setInviteToken(event.target.value)} autoComplete="off" required aria-describedby="invite-help" />
             <p id="invite-help" className="help-text">Paste the private token sent by the trip owner.</p>
-            <button type="submit" disabled={loading || !inviteToken.trim()} className="button button-primary">{loading ? 'Accepting…' : 'Accept invitation'}</button>
+            <button type="submit" disabled={loading || !inviteToken.trim()} className="button button-primary">{loading ? <LoadingLabel label="Accepting…" /> : 'Accept invitation'}</button>
             <button type="button" onClick={() => setMode('choose')} className="button button-quiet">Back</button>
           </form>
         )}
