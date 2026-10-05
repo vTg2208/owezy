@@ -359,7 +359,7 @@ describe('calculateBalanceReport', () => {
     }]);
   });
 
-  it('fails explicitly when an exact balance cannot fit the legacy numeric HTTP contract', async () => {
+  it('returns exact decimal strings when aggregated balances exceed safe numeric cents', async () => {
     const repository = new MemoryExpenseRepository();
     repository.ledger = {
       memberships: [
@@ -381,9 +381,12 @@ describe('calculateBalanceReport', () => {
       payments: [],
     };
 
-    await expect(service(repository).getBalances('user-a', 'trip-1')).rejects.toMatchObject({
-      status: 500,
-      message: 'Balance exceeds the legacy numeric HTTP range',
+    await expect(service(repository).getBalances('user-a', 'trip-1')).resolves.toMatchObject({
+      balances: [
+        { memberId: 'member-a', balance: '180143985094819.82' },
+        { memberId: 'member-b', balance: '-180143985094819.82' },
+      ],
+      settlements: [{ amount: '180143985094819.82' }],
     });
   });
 });

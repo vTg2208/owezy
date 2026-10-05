@@ -1,4 +1,4 @@
-import { allocateEqual, majorToMinor } from '../domain/money';
+import { allocateEqual, majorToMinor, minorToMajor } from '../domain/money';
 import { generateId } from '../utils/helpers';
 import { z } from 'zod';
 import { ServiceError } from './errors';
@@ -357,8 +357,8 @@ export class ExpenseService {
   }
 
   async getBalances(firebaseUid: string, tripId: string): Promise<{
-    balances: Array<{ memberId: string; memberName: string; balance: number }>;
-    settlements: Array<{ from: string; to: string; amount: number; fromName: string; toName: string }>;
+    balances: Array<{ memberId: string; memberName: string; balance: number | string }>;
+    settlements: Array<{ from: string; to: string; amount: number | string; fromName: string; toName: string }>;
   }> {
     const ledger = await this.repository.getBalanceLedgerForMember(firebaseUid, tripId);
     if (!ledger) throw new ServiceError(403, 'You are not a member of this trip');
@@ -368,12 +368,12 @@ export class ExpenseService {
       balances: Object.entries(report.balanceMinorByMember).map(([memberId, amountMinor]) => ({
         memberId,
         memberName: names.get(memberId) ?? 'Unknown',
-        balance: minorToLegacyNumber(amountMinor),
+        balance: minorToResponseAmount(amountMinor),
       })),
       settlements: report.settlementMinor.map((settlement) => ({
         from: settlement.from,
         to: settlement.to,
-        amount: minorToLegacyNumber(settlement.amountMinor),
+        amount: minorToResponseAmount(settlement.amountMinor),
         fromName: settlement.fromName,
         toName: settlement.toName,
       })),
@@ -448,9 +448,10 @@ export function calculateBalanceReport(ledger: BalanceLedger): BalanceReport {
 
 const MAX_SAFE_MINOR = BigInt(Number.MAX_SAFE_INTEGER);
 
-export function minorToLegacyNumber(amountMinor: bigint, label = 'Balance'): number {
-  if (amountMinor > MAX_SAFE_MINOR || amountMinor < -MAX_SAFE_MINOR) {
-    throw new ServiceError(500, `${label} exceeds the legacy numeric HTTP range`);
+export function minorToResponseAmount(amountMinor: bigint): number | string {
+  if (amountMinor <= MAX_SAFE_MINOR && amountMinor >= -MAX_SAFE_MINOR) {
+    const numeric = Number(amountMinor) / 100;
+    if (BigInt(Math.round(numeric * 100)) === amountMinor) return numeric;
   }
-  return Number(amountMinor) / 100;
+  return minorToMajor(amountMinor);
 }

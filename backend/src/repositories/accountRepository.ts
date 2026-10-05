@@ -108,7 +108,7 @@ export class PostgresAccountRepository implements AccountRepository {
          FROM users u
          JOIN trip_memberships m ON m.user_id = u.id AND m.status = 'active'
          JOIN trips t ON t.id = m.trip_id
-        WHERE u.firebase_uid = $1
+        WHERE u.firebase_uid = $1 AND u.account_status = 'active'
         ORDER BY t.created_at DESC, t.id DESC`,
       [firebaseUid],
     );

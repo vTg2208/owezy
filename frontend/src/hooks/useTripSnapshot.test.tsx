@@ -1,11 +1,14 @@
 import { StrictMode, type PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import type { TripSnapshot } from '../types';
 import { useTripSnapshot } from './useTripSnapshot';
 
-vi.mock('../api', () => ({ api: { getTrip: vi.fn(), getExpenses: vi.fn() } }));
+vi.mock('../api', () => ({
+  ApiError: class ApiError extends Error { constructor(public status: number) { super('Forbidden'); } },
+  api: { getTrip: vi.fn(), getExpenses: vi.fn() },
+}));
 
 const snapshot: TripSnapshot = {
   trip: { id: 'trip-1', name: 'Goa', room_code: 'GOA123', admin_id: 'member-1', is_locked: 0, created_at: '2026-08-31', currency: 'INR' },
@@ -44,7 +47,19 @@ describe('useTripSnapshot', () => {
 
     expect(result.current.snapshot?.expenses.map((expense) => expense.id)).toEqual(['expense-2']);
     expect(result.current.snapshot?.expense_next_cursor).toBeUndefined();
-    expect(api.getExpenses).toHaveBeenCalledWith('trip-1', 'cursor-1');
+    expect(api.getExpenses).toHaveBeenCalledWith('trip-1', 'cursor-1', expect.any(AbortSignal));
     expect(api.getTrip).toHaveBeenCalledOnce();
+  });
+
+  it('removes a protected snapshot after authorization is denied', async () => {
+    vi.mocked(api.getTrip).mockResolvedValueOnce(snapshot)
+      .mockRejectedValueOnce(new ApiError(403, 'FORBIDDEN', 'Forbidden'));
+    const { result } = renderHook(() => useTripSnapshot('trip-1'));
+    await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+
+    await act(() => result.current.refresh());
+
+    expect(result.current.snapshot).toBeNull();
+    expect(result.current.error).toBe('Forbidden');
   });
 });

@@ -11,6 +11,15 @@ afterEach(() => {
 });
 
 describe('security-sensitive API requests', () => {
+  it('rejects an external receipt URL before sending the bearer token', async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await expect(api.readReceipt('https://attacker.invalid/api/trips/t/receipts/r'))
+      .rejects.toThrow('Invalid receipt URL');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('makes invitation revocation replay-safe with an idempotency key', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ success: true }), {
       status: 200,

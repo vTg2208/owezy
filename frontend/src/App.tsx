@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Welcome from './pages/Welcome';
@@ -29,7 +30,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     />;
   }
   
-  return <>{children}</>;
+  return <Fragment key={user.id}>{children}</Fragment>;
 }
 
 // Wrapper component to handle trip route with URL params
@@ -38,7 +39,7 @@ function TripRoute() {
   if (!tripId) {
     return <Navigate to="/dashboard" replace />;
   }
-  return <TripDashboard tripId={tripId} />;
+  return <TripDashboard key={tripId} tripId={tripId} />;
 }
 
 function AppContent() {

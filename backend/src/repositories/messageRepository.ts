@@ -25,7 +25,7 @@ export class PostgresMessageRepository implements MessageRepository {
       `SELECT m.id, m.trip_id, u.firebase_uid, m.display_name
          FROM trip_memberships m
          JOIN users u ON u.id = m.user_id
-        WHERE u.firebase_uid = $1 AND m.trip_id = $2 AND m.status = 'active'`,
+        WHERE u.firebase_uid = $1 AND u.account_status = 'active' AND m.trip_id = $2 AND m.status = 'active'`,
       [firebaseUid, tripId],
     );
     const row = result.rows[0];
@@ -74,7 +74,7 @@ export class PostgresMessageRepository implements MessageRepository {
          SELECT 1
            FROM trip_memberships m
            JOIN users u ON u.id = m.user_id
-          WHERE u.firebase_uid = $1 AND m.trip_id = $2 AND m.status = 'active'
+          WHERE u.firebase_uid = $1 AND u.account_status = 'active' AND m.trip_id = $2 AND m.status = 'active'
        ) AS authorized`,
       [firebaseUid, tripId],
     );

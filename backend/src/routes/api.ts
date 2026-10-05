@@ -6,7 +6,7 @@ import { PostgresMessageRepository } from '../repositories/messageRepository';
 import { PostgresReceiptRepository } from '../repositories/receiptRepository';
 import { PostgresTripRepository } from '../repositories/tripRepository';
 import { ServiceError } from '../services/errors';
-import { ExpenseService, minorToLegacyNumber } from '../services/expenseService';
+import { ExpenseService, minorToResponseAmount } from '../services/expenseService';
 import { IdempotencyService } from '../services/idempotencyService';
 import { InviteService } from '../services/inviteService';
 import { MessageService } from '../services/messageService';
@@ -79,7 +79,7 @@ function expenseResponse(expense: TripExpenseSummary, fallbackCurrency: string, 
     paid_by: expense.paidBy,
     paid_by_name: expense.paidByName,
     description: expense.description,
-    amount: minorToLegacyNumber(expense.amountMinor, 'Expense amount'),
+    amount: minorToResponseAmount(expense.amountMinor),
     split_type: expense.splitType,
     receipt_url: expense.receiptUrl,
     created_at: expense.createdAt,

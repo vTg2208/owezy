@@ -66,6 +66,7 @@ describe('PostgresTripRepository', () => {
     expect(created).toEqual({ trip, owner });
     expect(database.tripInsertedInTransaction).toBe(true);
     expect(database.ownerInsertedInTransaction).toBe(true);
+    expect(database.statements[0]).toContain("account_status = 'active' FOR UPDATE");
   });
 
   it('reports a conflict only for an active case-insensitive trip name', async () => {
@@ -74,6 +75,8 @@ describe('PostgresTripRepository', () => {
 
     await expect(repository.joinTripForUser('firebase-2', 'ABC123', 'owner', 'member-new'))
       .resolves.toEqual({ kind: 'name-conflict' });
+    expect(database.statements[0]).toContain("account_status = 'active' FOR UPDATE");
+    expect(database.statements[1]).toContain('FOR UPDATE OF t');
   });
 
   it('returns an authenticated application receipt URL instead of a storage key', async () => {

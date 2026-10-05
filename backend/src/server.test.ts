@@ -41,6 +41,15 @@ describe('server lifecycle', () => {
     expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN');
   });
 
+  it('sets private no-store on authenticated API responses, including auth routes', async () => {
+    const response = await requestApp(createApp({
+      database: { check: async () => undefined },
+      authenticate: (_request, _response, next) => next(),
+    }), '/api/v1/auth/me');
+
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
   it('does not copy unexpected internal error messages into structured logs', async () => {
     const errors: Array<Record<string, unknown>> = [];
     const response = await requestApp(createApp({

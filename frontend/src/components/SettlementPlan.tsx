@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../api';
 import type { Payment, Settlement } from '../types';
 import { LoadingLabel } from './LoadingIndicator';
+import { moneyDecimal } from '../utils/money';
 
 interface SettlementPlanProps {
   tripId: string;
@@ -37,15 +38,15 @@ export default function SettlementPlan({
         {relevant.length === 0 ? <p className="notice notice-success">You’re all settled.</p> : (
           <div className="ledger-list">
             {relevant.map((item) => (
-              <article key={`${item.from}-${item.to}`} className="ledger-row">
+              <article key={`${item.from}-${item.to}`} className="ledger-row flex-wrap">
                 <p><strong>{item.from === currentUserId ? 'You' : item.fromName}</strong> pay <strong>{item.to === currentUserId ? 'you' : item.toName}</strong></p>
-                <p className="text-xl font-bold">₹{item.amount.toFixed(2)}</p>
+                <p className="text-xl font-bold whitespace-nowrap">₹{moneyDecimal(item.amount)}</p>
                 {item.from === currentUserId && (
                   <button
                     type="button"
                     disabled={Boolean(busy)}
                     onClick={() => void mutate(`create-${item.to}`, () => api.createPayment(
-                      tripId, item.to, item.amount.toFixed(2), 'Settlement',
+                      tripId, item.to, moneyDecimal(item.amount), 'Settlement',
                     ))}
                     className="button button-primary"
                   >{busy === `create-${item.to}` ? <LoadingLabel label="Recording…" /> : 'Record payment'}</button>

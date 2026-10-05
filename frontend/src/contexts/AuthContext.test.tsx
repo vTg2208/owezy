@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider, useAuth } from './AuthContext';
@@ -53,7 +53,14 @@ function Harness() {
 }
 
 describe('AuthProvider recovery flows', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    firebase.onAuthStateChanged.mockReset().mockImplementation((_auth, listener) => {
+      listener(null);
+      return () => undefined;
+    });
+    backend.syncUser.mockReset().mockResolvedValue(undefined);
+  });
 
   it('does not expose a verified Firebase session until backend sync finishes', async () => {
     let finishSync!: () => void;
@@ -70,6 +77,43 @@ describe('AuthProvider recovery flows', () => {
 
     finishSync();
     expect(await screen.findByText('Ready Traveller')).toBeVisible();
+  });
+
+  it('ignores an older sync completion after an identity switch', async () => {
+    let notify!: (user: AuthStateUser | null) => void;
+    let finishFirst!: () => void;
+    backend.syncUser.mockReturnValueOnce(new Promise<void>((resolve) => { finishFirst = resolve; }));
+    firebase.onAuthStateChanged.mockImplementationOnce((_auth, listener) => {
+      notify = listener;
+      return () => undefined;
+    });
+    render(<AuthProvider><UserProbe /></AuthProvider>);
+
+    act(() => { notify({ uid: 'a', email: 'a@example.com', displayName: 'A', emailVerified: true }); });
+    act(() => { notify({ uid: 'b', email: 'b@example.com', displayName: 'B', emailVerified: true }); });
+    expect(screen.getByText('signed out')).toBeVisible();
+    expect(await screen.findByText('B')).toBeVisible();
+    await act(async () => finishFirst());
+    expect(screen.getByText('B')).toBeVisible();
+  });
+
+  it('removes the previous account while the new account is still syncing', async () => {
+    let notify!: (user: AuthStateUser | null) => void;
+    let finishSecond!: () => void;
+    backend.syncUser.mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(new Promise<void>((resolve) => { finishSecond = resolve; }));
+    firebase.onAuthStateChanged.mockImplementationOnce((_auth, listener) => {
+      notify = listener;
+      return () => undefined;
+    });
+    render(<AuthProvider><UserProbe /></AuthProvider>);
+
+    act(() => { notify({ uid: 'a', email: 'a@example.com', displayName: 'A', emailVerified: true }); });
+    expect(await screen.findByText('A')).toBeVisible();
+    act(() => { notify({ uid: 'b', email: 'b@example.com', displayName: 'B', emailVerified: true }); });
+    expect(screen.getByText('signed out')).toBeVisible();
+    await act(async () => finishSecond());
+    expect(screen.getByText('B')).toBeVisible();
   });
 
   it('falls back to redirect when the Google popup cannot start', async () => {
