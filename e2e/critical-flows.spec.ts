@@ -46,7 +46,13 @@ async function installApi(page: Page) {
   });
 }
 
-test.beforeEach(async ({ page }) => { await installApi(page); });
+test.beforeEach(async ({ page }) => {
+  await page.route('**/*', (route) => {
+    if (new URL(route.request().url()).origin !== 'http://127.0.0.1:4173') return route.abort();
+    return route.continue();
+  });
+  await installApi(page);
+});
 
 test('registration and login stubs reach the authenticated dashboard', async ({ page }) => {
   test.setTimeout(60_000);
@@ -83,6 +89,64 @@ test('expense entry preserves the entered amount and description', async ({ page
   await page.getByRole('button', { name: 'Add expense' }).click();
   await expect(page.getByText('Airport chai')).toBeVisible();
   await expect(page.getByText('₹101.01')).toBeVisible();
+});
+
+test('large exact amounts stay readable and are submitted without rounding', async ({ page }, testInfo) => {
+  const exactAmount = '90071992547409.92';
+  let submittedAmount: string | undefined;
+  const browserErrors: string[] = [];
+  const blockedResourceErrors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    if (message.text() === 'Failed to load resource: net::ERR_FAILED') blockedResourceErrors.push(message.text());
+    else browserErrors.push(message.text());
+  });
+  page.on('requestfailed', (request) => failedRequests.push(`${request.url()} ${request.failure()?.errorText}`));
+  await page.route('**/api/v1/trips/trip-1', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ...snapshot([{
+        id: 'expense-large', trip_id: 'trip-1', paid_by: member.id, paid_by_name: member.name,
+        amount: exactAmount, description: 'Large booking', split_type: 'equal',
+        created_at: '2026-08-31T00:00:00Z', version: 1,
+      }]),
+      balances: [
+        { memberId: member.id, memberName: member.name, balance: `-${exactAmount}` },
+        { memberId: friend.id, memberName: friend.name, balance: exactAmount },
+      ],
+      settlements: [{ from: member.id, to: friend.id, amount: exactAmount, fromName: member.name, toName: friend.name }],
+    }),
+  }));
+  await page.route('**/api/v1/trips/trip-1/payments', async (route) => {
+    if (route.request().method() === 'POST') {
+      submittedAmount = route.request().postDataJSON().amount;
+      return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: 'payment-large', status: 'pending' }) });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ payments: [] }) });
+  });
+
+  await page.goto('/trip/trip-1');
+  await expect(page).toHaveTitle(/Owezy/);
+  await expect(page.locator('vite-error-overlay')).toHaveCount(0);
+  await expect(page.getByText('Large booking')).toBeVisible();
+  await expect(page.getByText(`₹${exactAmount}`).first()).toBeVisible();
+  await page.getByRole('tab', { name: 'Balances' }).click();
+  await expect(page.getByText(`₹-${exactAmount}`)).toBeVisible();
+  await page.getByRole('tab', { name: 'Settlement' }).click();
+  const settlementAmount = page.getByRole('tabpanel', { name: 'Settlement' }).getByText(`₹${exactAmount}`);
+  await expect(settlementAmount).toBeVisible();
+  expect(await settlementAmount.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(40);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  expect(submittedAmount).toBe(exactAmount);
+  expect(failedRequests.filter((request) => !request.startsWith('https://apis.google.com/js/api.js?'))).toEqual([]);
+  expect(blockedResourceErrors.length).toBeLessThanOrEqual(failedRequests.length);
+  expect(browserErrors).toEqual([]);
+  if (process.env.QA_SCREENSHOT_DIR) {
+    await page.screenshot({ path: `${process.env.QA_SCREENSHOT_DIR}/${testInfo.project.name}-exact-money.png` });
+  }
 });
 
 test('closing a room blocks new travellers without blocking expenses', async ({ page }) => {

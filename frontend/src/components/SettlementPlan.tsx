@@ -38,9 +38,9 @@ export default function SettlementPlan({
         {relevant.length === 0 ? <p className="notice notice-success">You’re all settled.</p> : (
           <div className="ledger-list">
             {relevant.map((item) => (
-              <article key={`${item.from}-${item.to}`} className="ledger-row">
+              <article key={`${item.from}-${item.to}`} className="ledger-row flex-wrap">
                 <p><strong>{item.from === currentUserId ? 'You' : item.fromName}</strong> pay <strong>{item.to === currentUserId ? 'you' : item.toName}</strong></p>
-                <p className="text-xl font-bold">₹{moneyDecimal(item.amount)}</p>
+                <p className="text-xl font-bold whitespace-nowrap">₹{moneyDecimal(item.amount)}</p>
                 {item.from === currentUserId && (
                   <button
                     type="button"

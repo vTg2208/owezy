@@ -53,7 +53,14 @@ function Harness() {
 }
 
 describe('AuthProvider recovery flows', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    firebase.onAuthStateChanged.mockReset().mockImplementation((_auth, listener) => {
+      listener(null);
+      return () => undefined;
+    });
+    backend.syncUser.mockReset().mockResolvedValue(undefined);
+  });
 
   it('does not expose a verified Firebase session until backend sync finishes', async () => {
     let finishSync!: () => void;
@@ -82,8 +89,8 @@ describe('AuthProvider recovery flows', () => {
     });
     render(<AuthProvider><UserProbe /></AuthProvider>);
 
-    act(() => notify({ uid: 'a', email: 'a@example.com', displayName: 'A', emailVerified: true }));
-    act(() => notify({ uid: 'b', email: 'b@example.com', displayName: 'B', emailVerified: true }));
+    act(() => { notify({ uid: 'a', email: 'a@example.com', displayName: 'A', emailVerified: true }); });
+    act(() => { notify({ uid: 'b', email: 'b@example.com', displayName: 'B', emailVerified: true }); });
     expect(screen.getByText('signed out')).toBeVisible();
     expect(await screen.findByText('B')).toBeVisible();
     await act(async () => finishFirst());
@@ -101,9 +108,9 @@ describe('AuthProvider recovery flows', () => {
     });
     render(<AuthProvider><UserProbe /></AuthProvider>);
 
-    act(() => notify({ uid: 'a', email: 'a@example.com', displayName: 'A', emailVerified: true }));
+    act(() => { notify({ uid: 'a', email: 'a@example.com', displayName: 'A', emailVerified: true }); });
     expect(await screen.findByText('A')).toBeVisible();
-    act(() => notify({ uid: 'b', email: 'b@example.com', displayName: 'B', emailVerified: true }));
+    act(() => { notify({ uid: 'b', email: 'b@example.com', displayName: 'B', emailVerified: true }); });
     expect(screen.getByText('signed out')).toBeVisible();
     await act(async () => finishSecond());
     expect(screen.getByText('B')).toBeVisible();

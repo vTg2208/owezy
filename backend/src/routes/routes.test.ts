@@ -412,6 +412,7 @@ describe('API routes', () => {
     const response = await request(router, '/trips/trip-1');
 
     expect(response.status).toBe(200);
-    expect((await response.json()).expenses[0].amount).toBe('90071992547409.92');
+    const body = await response.json() as { expenses: Array<{ amount: number | string }> };
+    expect(body.expenses[0].amount).toBe('90071992547409.92');
   });
 });
