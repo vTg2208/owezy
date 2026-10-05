@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import type { Payment } from '../types';
 import { useTripSnapshot } from '../hooks/useTripSnapshot';
 import AddExpense from '../components/AddExpense';
@@ -30,13 +30,31 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
   const [actionError, setActionError] = useState('');
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [busyAction, setBusyAction] = useState('');
+  const [authorizationFailure, setAuthorizationFailure] = useState('');
+  const paymentsGeneration = useRef(0);
 
   const loadPayments = useCallback(async () => {
-    try { setPayments(await api.listPayments(tripId)); }
-    catch (failure) { setActionError(failure instanceof Error ? failure.message : 'Failed to load payments'); }
+    const generation = ++paymentsGeneration.current;
+    try {
+      const next = await api.listPayments(tripId);
+      if (generation === paymentsGeneration.current) setPayments(next);
+    }
+    catch (failure) {
+      if (generation !== paymentsGeneration.current) return;
+      setPayments([]);
+      if (failure instanceof ApiError && (failure.status === 401 || failure.status === 403)) {
+        setAuthorizationFailure(failure.message);
+      }
+      setActionError(failure instanceof Error ? failure.message : 'Failed to load payments');
+    }
   }, [tripId]);
 
-  useEffect(() => { void loadPayments(); }, [loadPayments]);
+  const hasSnapshot = snapshot !== null;
+  useEffect(() => {
+    if (hasSnapshot) void loadPayments();
+    else { paymentsGeneration.current += 1; setPayments([]); }
+    return () => { paymentsGeneration.current += 1; };
+  }, [hasSnapshot, loadPayments]);
 
   const refreshAll = async () => {
     await Promise.all([refresh(), loadPayments()]);
@@ -50,6 +68,7 @@ export default function TripDashboard({ tripId }: { tripId: string }) {
     finally { setBusyAction(''); }
   };
 
+  if (authorizationFailure) return <main className="min-h-screen grid place-items-center"><p role="alert">{authorizationFailure}</p></main>;
   if (loading && !snapshot) return <main className="loading-screen"><LoadingIndicator label="Loading trip…" /></main>;
   if (!snapshot) return <main className="min-h-screen grid place-items-center"><p role="alert">{error ?? 'Trip not found'}</p></main>;
 

@@ -102,7 +102,7 @@ export class PostgresTripRepository implements TripRepository {
   ): Promise<{ trip: TripRecord; owner: Membership }> {
     return this.transaction(async (database) => {
       const userResult = await database.query(
-        `SELECT id FROM users WHERE firebase_uid = $1 AND account_status = 'active'`,
+        `SELECT id FROM users WHERE firebase_uid = $1 AND account_status = 'active' FOR UPDATE`,
         [firebaseUid],
       );
       const user = userResult.rows[0];
@@ -130,6 +130,11 @@ export class PostgresTripRepository implements TripRepository {
     membershipId: string,
   ): Promise<JoinResult> {
     return this.transaction(async (database) => {
+      const activeUser = await database.query(
+        `SELECT id FROM users WHERE firebase_uid = $1 AND account_status = 'active' FOR UPDATE`,
+        [firebaseUid],
+      );
+      if (!activeUser.rows[0]) return { kind: 'not-found' };
       const result = await database.query(
         `SELECT t.id AS trip_id,
                 t.name AS trip_name,
@@ -152,13 +157,13 @@ export class PostgresTripRepository implements TripRepository {
                      AND m.id IS DISTINCT FROM existing.id
                 ) AS name_conflict
            FROM trips t
-           JOIN users u ON u.firebase_uid = $2 AND u.account_status = 'active'
+           JOIN users u ON u.id = $2 AND u.account_status = 'active'
            LEFT JOIN trip_memberships existing
              ON existing.trip_id = t.id AND existing.user_id = u.id
           WHERE upper(t.room_code) = $1
             AND t.archived_at IS NULL
           FOR UPDATE OF t`,
-        [roomCode, firebaseUid, displayName],
+        [roomCode, activeUser.rows[0].id, displayName],
       );
       const row = result.rows[0];
       if (!row) return { kind: 'not-found' };
@@ -218,6 +223,7 @@ export class PostgresTripRepository implements TripRepository {
          FROM trip_memberships m
          JOIN users u ON u.id = m.user_id
         WHERE u.firebase_uid = $1
+          AND u.account_status = 'active'
           AND m.trip_id = $2
           AND m.status = 'active'`,
       [firebaseUid, tripId],
@@ -233,7 +239,7 @@ export class PostgresTripRepository implements TripRepository {
            FROM trips t
            JOIN trip_memberships m ON m.trip_id = t.id AND m.status = 'active'
            JOIN users u ON u.id = m.user_id
-          WHERE t.id = $1 AND u.firebase_uid = $2`,
+          WHERE t.id = $1 AND u.firebase_uid = $2 AND u.account_status = 'active'`,
         [tripId, firebaseUid],
       );
       if (!authorization.rows[0]) return null;
@@ -293,7 +299,7 @@ export class PostgresTripRepository implements TripRepository {
         `SELECT 1
            FROM trip_memberships m
            JOIN users u ON u.id = m.user_id
-          WHERE m.trip_id = $1 AND u.firebase_uid = $2 AND m.status = 'active'`,
+          WHERE m.trip_id = $1 AND u.firebase_uid = $2 AND u.account_status = 'active' AND m.status = 'active'`,
         [tripId, firebaseUid],
       );
       if (!membership.rows[0]) return null;

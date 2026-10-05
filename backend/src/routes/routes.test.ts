@@ -387,7 +387,7 @@ describe('API routes', () => {
     });
   });
 
-  it('fails explicitly when an expense amount cannot fit the legacy numeric HTTP contract', async () => {
+  it('serializes an exact decimal expense amount above the safe numeric cent range', async () => {
     const base = dependencies();
     const router = createApiRouter(dependencies({
       tripService: {
@@ -411,7 +411,7 @@ describe('API routes', () => {
 
     const response = await request(router, '/trips/trip-1');
 
-    expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: 'Expense amount exceeds the legacy numeric HTTP range' });
+    expect(response.status).toBe(200);
+    expect((await response.json()).expenses[0].amount).toBe('90071992547409.92');
   });
 });

@@ -268,6 +268,14 @@ export class PostgresFinancialRepository implements PaymentRepository, InviteRep
     | { kind: 'not-found' | 'expired' | 'email-mismatch' | 'conflict' | 'account-missing' | 'locked' }
   > {
     return this.run(database, async (executor) => {
+      // Serialize membership creation with account deletion before locking a trip.
+      const user = await executor.query(
+        `SELECT id FROM users
+          WHERE firebase_uid = $1 AND lower(email) = lower($2) AND account_status = 'active'
+          FOR UPDATE`,
+        [principal.uid, principal.email],
+      );
+      if (!user.rows[0]) return { kind: 'account-missing' };
       const result = await executor.query(
         `SELECT i.id, i.trip_id, i.email, i.status, i.expires_at, t.is_locked
            FROM trip_invites i
@@ -281,13 +289,6 @@ export class PostgresFinancialRepository implements PaymentRepository, InviteRep
       if (String(invite.email).toLowerCase() !== principal.email.toLowerCase()) {
         return { kind: 'email-mismatch' };
       }
-      const user = await executor.query(
-        `SELECT id FROM users
-          WHERE firebase_uid = $1 AND lower(email) = lower($2) AND account_status = 'active'
-          FOR UPDATE`,
-        [principal.uid, principal.email],
-      );
-      if (!user.rows[0]) return { kind: 'account-missing' };
       if (invite.status === 'accepted') {
         const accepted = await executor.query(
           `SELECT id FROM trip_memberships

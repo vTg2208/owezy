@@ -1,4 +1,5 @@
 import { Balance } from '../types';
+import { moneyDecimal, moneySign } from '../utils/money';
 
 interface BalanceSheetProps {
   balances: Balance[];
@@ -28,19 +29,19 @@ export default function BalanceSheet({ balances, currentUserId }: BalanceSheetPr
             <div className="text-left sm:text-right">
               <div
                 className={`text-xl sm:text-2xl font-bold ${
-                  userBalance.balance > 0
+                  moneySign(userBalance.balance) > 0
                     ? 'balance-positive'
-                    : userBalance.balance < 0
+                    : moneySign(userBalance.balance) < 0
                     ? 'text-red-600'
                     : 'text-muted'
                 }`}
               >
-                {userBalance.balance > 0 ? '+' : ''}₹{userBalance.balance.toFixed(2)}
+                {moneySign(userBalance.balance) > 0 ? '+' : ''}₹{moneyDecimal(userBalance.balance)}
               </div>
               <div className="text-muted text-xs font-semibold sm:text-sm">
-                {userBalance.balance > 0
+                {moneySign(userBalance.balance) > 0
                   ? 'You will get back'
-                  : userBalance.balance < 0
+                  : moneySign(userBalance.balance) < 0
                   ? 'You owe'
                   : 'You are settled'}
               </div>
@@ -59,19 +60,19 @@ export default function BalanceSheet({ balances, currentUserId }: BalanceSheetPr
                 <div className="text-right">
                   <div
                     className={`text-base sm:text-xl font-bold ${
-                      balance.balance > 0
+                      moneySign(balance.balance) > 0
                         ? 'balance-positive'
-                        : balance.balance < 0
+                        : moneySign(balance.balance) < 0
                         ? 'text-red-600'
                         : 'text-muted'
                     }`}
                   >
-                    {balance.balance > 0 ? '+' : ''}₹{balance.balance.toFixed(2)}
+                    {moneySign(balance.balance) > 0 ? '+' : ''}₹{moneyDecimal(balance.balance)}
                   </div>
                   <div className="text-muted text-xs">
-                    {balance.balance > 0
+                    {moneySign(balance.balance) > 0
                       ? 'Gets back'
-                      : balance.balance < 0
+                      : moneySign(balance.balance) < 0
                       ? 'Owes'
                       : 'Settled'}
                   </div>

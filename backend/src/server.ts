@@ -171,7 +171,10 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
   app.use(createAccessLogger(logger));
-  app.use('/api', dependencies.authenticate ?? authenticateToken, rateLimit({
+  app.use('/api', (_request, response, next) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    next();
+  }, dependencies.authenticate ?? authenticateToken, rateLimit({
     windowMs: uidLimiter.windowMs,
     limit: uidLimiter.max,
     keyGenerator: (request) => (request as AuthRequest).principal?.uid || 'missing-principal',

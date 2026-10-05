@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { reconcileReceipts } from './receiptReconcile';
+import { describe, expect, it, vi } from 'vitest';
+import { PostgresReceiptReconcileRepository, reconcileReceipts } from './receiptReconcile';
+
+const pool = vi.hoisted(() => ({ query: vi.fn(async (_sql: string, _values: unknown[]) => ({ rows: [] })) }));
+vi.mock('../database', () => ({ getPool: () => pool }));
 
 describe('reconcileReceipts', () => {
+  it('treats opaque receipt cursors as text', async () => {
+    await new PostgresReceiptReconcileRepository().listMetadata(10, 'receipt-opaque-1');
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toContain('$2::text');
+    expect(sql).not.toContain('$2::uuid');
+    expect(values).toEqual([10, 'receipt-opaque-1']);
+  });
   it('reports missing metadata targets and orphaned objects without mutating storage', async () => {
     const result = await reconcileReceipts(
       { limit: 10 },

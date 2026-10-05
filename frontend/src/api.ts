@@ -107,6 +107,17 @@ export function createIdempotencyKey(): string {
   return crypto.randomUUID();
 }
 
+export function resolveReceiptUrl(receiptUrl: string): string {
+  const apiOrigin = new URL(API_BASE, window.location.origin).origin;
+  const receipt = new URL(receiptUrl, apiOrigin);
+  const match = /^\/api\/(?:v1\/)?trips\/([A-Za-z0-9_-]+)\/receipts\/([A-Za-z0-9_-]+)$/.exec(receipt.pathname);
+  if (receipt.origin !== apiOrigin || !match || receipt.search || receipt.hash
+    || receipt.username || receipt.password) {
+    throw new Error('Invalid receipt URL');
+  }
+  return `${API_BASE}/trips/${match[1]}/receipts/${match[2]}`;
+}
+
 export const authAPI = {
   syncUser: async (_email?: string, _name?: string) => request<{ user: unknown }>('/auth/sync', {
     method: 'POST', json: {}, timeoutMs: 60_000,
@@ -161,10 +172,11 @@ export const api = {
     method: 'POST', body: file, contentType: file.type || 'application/octet-stream',
   }),
   readReceipt: async (receiptUrl: string, signal?: AbortSignal): Promise<Blob> => {
-    const path = receiptUrl.startsWith('/api/') ? receiptUrl.slice('/api'.length) : receiptUrl;
+    const url = resolveReceiptUrl(receiptUrl);
     const token = await auth.currentUser?.getIdToken();
-    const response = await fetch(path.startsWith('http') ? path : `${API_BASE}${path}`, {
+    const response = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {}, signal,
+      credentials: 'omit', cache: 'no-store',
     });
     if (!response.ok) {
       const payload = await errorPayload(response);

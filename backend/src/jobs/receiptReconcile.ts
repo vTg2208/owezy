@@ -20,7 +20,7 @@ export class PostgresReceiptReconcileRepository implements ReceiptReconcileRepos
     const result = await getPool().query(
       `SELECT id, storage_key
          FROM receipts
-        WHERE ($2::uuid IS NULL OR id > $2::uuid)
+        WHERE ($2::text IS NULL OR id > $2::text)
         ORDER BY id
         LIMIT $1`,
       [limit, afterId ?? null],

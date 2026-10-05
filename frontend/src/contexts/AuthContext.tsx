@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -33,7 +33,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const e2eAuthEnabled = import.meta.env.VITE_E2E_AUTH === 'true';
+const e2eAuthEnabled = import.meta.env.DEV && import.meta.env.VITE_E2E_AUTH === 'true';
 const e2eUser: User = {
   id: 'e2e-user', email: 'traveller@example.com', name: 'Test Traveller', emailVerified: true,
 };
@@ -60,6 +60,7 @@ async function sendVerificationWithRetry(firebaseUser: Parameters<typeof sendEma
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const authGeneration = useRef(0);
 
   useEffect(() => {
     if (e2eAuthEnabled) {
@@ -68,9 +69,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return undefined;
     }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      const generation = ++authGeneration.current;
+      setUser(null);
+      setIsLoading(true);
       if (firebaseUser?.emailVerified) {
         try {
           await authAPI.syncUser(firebaseUser.email || '', firebaseUser.displayName || '');
+          if (generation !== authGeneration.current) return;
           setUser({
             id: firebaseUser.uid,
             email: firebaseUser.email || '',
@@ -78,20 +83,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             emailVerified: firebaseUser.emailVerified
           });
         } catch (error) {
+          if (generation !== authGeneration.current) return;
           console.error("Error syncing auth state", error);
           setUser(null);
         }
       } else {
         setUser(null);
       }
-      setIsLoading(false);
+      if (generation === authGeneration.current) setIsLoading(false);
     });
 
     void getRedirectResult(auth).catch((error) => {
       console.error('Google redirect completion failed', error);
     });
 
-    return () => unsubscribe();
+    return () => { authGeneration.current += 1; unsubscribe(); };
   }, []);
 
   const login = async (email: string, password: string) => {

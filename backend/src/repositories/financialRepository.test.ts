@@ -37,11 +37,13 @@ class FinancialBoundary {
 
 class InviteAcceptanceBoundary {
   displayName = '';
+  readonly statements: string[] = [];
 
   constructor(private readonly locked = false) {}
 
   async query(text: string, values: unknown[] = []) {
     const sql = text.replace(/\s+/g, ' ').trim();
+    this.statements.push(sql);
     if (sql.includes('FROM trip_invites i') && sql.includes('JOIN trips')) {
       return { rows: [{ id: 'invite-1', trip_id: 'trip-1', email: 'guest@example.com', status: 'pending', expires_at: new Date('2099-09-01T00:00:00.000Z'), is_locked: this.locked }], rowCount: 1 };
     }
@@ -114,6 +116,8 @@ describe('PostgresFinancialRepository', () => {
 
     expect(database.displayName).toBe(`${'N'.repeat(95)} memb`);
     expect(database.displayName).toHaveLength(100);
+    expect(database.statements[0]).toContain("account_status = 'active' FOR UPDATE");
+    expect(database.statements[1]).toContain('FOR UPDATE OF i, t');
   });
 
   it('rejects a new invitation acceptance while the room is closed', async () => {

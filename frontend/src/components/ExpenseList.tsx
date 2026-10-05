@@ -4,6 +4,7 @@ import type { Expense, Participant } from '../types';
 import { ReceiptObjectUrlLifecycle } from '../utils/receiptObjectUrl';
 import { buildEqualSplits } from '../utils/splitBuilder';
 import { LoadingLabel } from './LoadingIndicator';
+import { moneyDecimal } from '../utils/money';
 
 interface ExpenseListProps {
   tripId: string;
@@ -65,7 +66,7 @@ export default function ExpenseList({
   const beginCorrection = (expense: Expense) => {
     setEditing(expense.id);
     setDescription(expense.description);
-    setAmount(expense.amount.toFixed(2));
+    setAmount(moneyDecimal(expense.amount));
     setConfirmVoid(undefined);
   };
 
@@ -111,7 +112,7 @@ export default function ExpenseList({
           <article key={expense.id} className="expense-row">
             <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
               <div className="min-w-0"><h3 className="text-lg">{expense.description}</h3><p className="mt-1 text-sm text-muted">Paid by {expense.paid_by_name}</p></div>
-              <div className="text-right"><p className="money text-xl">₹{expense.amount.toFixed(2)}</p><p className="text-xs capitalize text-muted">{expense.split_type} split · v{expense.version ?? 1}</p></div>
+              <div className="text-right"><p className="money text-xl">₹{moneyDecimal(expense.amount)}</p><p className="text-xs capitalize text-muted">{expense.split_type} split · v{expense.version ?? 1}</p></div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1">
               {expense.receipt_url && <button type="button" onClick={(event) => void viewReceipt(expense.receipt_url!, event.currentTarget)} className="button button-quiet">View receipt</button>}

@@ -1,3 +1,5 @@
+import type { MoneyAmount } from './utils/money';
+
 export interface Trip {
   id: string;
   name: string;
@@ -23,7 +25,7 @@ export interface Expense {
   trip_id: string;
   paid_by: string;
   paid_by_name: string;
-  amount: number;
+  amount: MoneyAmount;
   description: string;
   split_type: 'equal' | 'custom' | 'percentage';
   receipt_url?: string;
@@ -45,13 +47,13 @@ export interface ExpenseSplit {
 export interface Balance {
   memberId: string;
   memberName: string;
-  balance: number;
+  balance: MoneyAmount;
 }
 
 export interface Settlement {
   from: string;
   to: string;
-  amount: number;
+  amount: MoneyAmount;
   fromName: string;
   toName: string;
 }
